@@ -1,4 +1,4 @@
-name: B1r8 Safe Fix Build
+name: B1r8 v3 Stable Pro
 
 on:
   workflow_dispatch:
@@ -20,7 +20,7 @@ jobs:
           sudo apt install -y build-essential git wget libncurses5-dev libssl-dev python3-distutils jq
 
       # =========================
-      # 📥 Clone（加 retry）
+      # 📥 Clone（稳定）
       # =========================
       - name: Clone OpenWrt
         run: |
@@ -31,7 +31,7 @@ jobs:
           done
 
       # =========================
-      # 📦 Feeds（稳定版）
+      # 📦 Feeds
       # =========================
       - name: Feeds
         run: |
@@ -40,7 +40,7 @@ jobs:
           ./scripts/feeds install -a || exit 1
 
       # =========================
-      # ⚙️ Config Base
+      # ⚙️ Config Base（干净版）
       # =========================
       - name: Config Base
         run: |
@@ -73,15 +73,24 @@ jobs:
           make defconfig
 
       # =========================
-      # 📦 DOWNLOAD（关键新增）
+      # 📦 DOWNLOAD（增强稳定核心）
       # =========================
       - name: Download Packages
         run: |
           cd openwrt
-          make download -j$(nproc) || make download -j1 V=s
+          make download -j8  make download -j1 V=s  exit 1
 
       # =========================
-      # 🔨 Build（稳定兜底）
+      # 🧠 CLEAN（减少失败概率）
+      # =========================
+      - name: Clean Build Cache
+        run: |
+          cd openwrt
+          rm -rf tmp || true
+          rm -rf logs || true
+
+      # =========================
+      # 🔨 BUILD（稳定输出）
       # =========================
       - name: Build Firmware
         run: |
@@ -89,12 +98,12 @@ jobs:
           make -j$(nproc) || make -j1 V=s
 
       # =========================
-      # 📦 Release
+      # 📦 RELEASE
       # =========================
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: B1r8-safe
+          tag_name: B1r8-v3-stable-pro
           files: openwrt/bin/targets/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
