@@ -1,59 +1,57 @@
-#
-# https://github.com/P3TERX/Actions-OpenWrt
-#
-# File: .github/workflows/update-checker.yml
-# Description: Source code update checker
-#
-# Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
-#
-# This is free software, licensed under the MIT License.
-# See /LICENSE for more information.
-#
-
-name: Update Checker
-
-env:
-  REPO_URL: https://github.com/coolsnowwolf/lede
-  REPO_BRANCH: master
+name: B1r8 Base Stable Test
 
 on:
   workflow_dispatch:
-#  schedule:
-#    - cron: 0 */18 * * *
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-22.04
 
     steps:
+      - uses: actions/checkout@v4
 
-    - name: Get Commit Hash
-      id: getHash
-      run: |
-        git clone --depth 1 $REPO_URL -b $REPO_BRANCH .
-        echo "commitHash=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+      # =========================
+      # Init
+      # =========================
+      - name: Init
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential git wget
 
-    - name: Compare Commit Hash
-      id: cacheHash
-      uses: actions/cache@v3
-      with:
-        path: .commitHash
-        key: commitHash_${{ steps.getHash.outputs.commitHash }}
+      # =========================
+      # Clone
+      # =========================
+      - name: Clone
+        run: |
+          git clone --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-    - name: Save New Commit Hash
-      if: steps.cacheHash.outputs.cache-hit != 'true'
-      run: |
-        echo ${{ steps.getHash.outputs.commitHash }} | tee .commitHash
+      # =========================
+      # Feeds（关键补齐）
+      # =========================
+      - name: Feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
-    - name: Trigger build
-      if: steps.cacheHash.outputs.cache-hit != 'true'
-      uses: peter-evans/repository-dispatch@v2
-      with:
-        token: ${{ github.token }}
-        event-type: Source Code Update
+      # =========================
+      # Config（修正关键 target）
+      # =========================
+      - name: Config
+        run: |
+          cd openwrt
+          rm -f .config
 
-    - name: Delete workflow runs
-      uses: Mattraks/delete-workflow-runs@v2
-      with:
-        retain_days: 0
-        keep_minimum_runs: 2
+          echo "CONFIG_TARGET_x86=y" >> .config
+          echo "CONFIG_TARGET_x86_64=y" >> .config
+          echo "CONFIG_TARGET_x86_64_DEVICE_generic=y" >> .config
+
+          make defconfig
+
+      # =========================
+      # Build
+      # =========================
+      - name: Build Test
+        run: |
+          cd openwrt
+          make -j1 V=s
