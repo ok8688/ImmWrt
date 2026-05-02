@@ -1,4 +1,4 @@
-name: B1r8 v4 Stable Network Pro
+name: B1r8 v5 Stable Architecture
 
 on:
   workflow_dispatch:
@@ -20,7 +20,7 @@ jobs:
           sudo apt install -y build-essential git wget libncurses5-dev libssl-dev python3-distutils jq
 
       # =========================
-      # 📥 Clone（稳定）
+      # 📥 Clone
       # =========================
       - name: Clone OpenWrt
         run: |
@@ -70,9 +70,6 @@ jobs:
           echo "CONFIG_PACKAGE_kmod-virtio-net=y" >> .config
           echo "CONFIG_PACKAGE_kmod-virtio-blk=y" >> .config
 
-          # =========================
-          # 🚀 网络性能增强（关键升级）
-          # =========================
           echo "CONFIG_PACKAGE_kmod-nft-offload=y" >> .config
           echo "CONFIG_PACKAGE_kmod-nf-flow=y" >> .config
 
@@ -96,6 +93,33 @@ jobs:
           rm -rf logs || true
 
       # =========================
+      # 🧠 NETWORK ARCH OPTIMIZE（核心升级）
+      # =========================
+      - name: Network Architecture Optimize
+        run: |
+          cd openwrt
+
+          # =========================
+          # DNS 架构稳定化
+          # =========================
+          sed -i '/server=/d' package/network/services/dnsmasq/files/dhcp.conf || true
+          echo "server=127.0.0.1#5335" >> package/network/services/dnsmasq/files/dhcp.conf
+
+          # smartdns 避免冲突
+          sed -i 's/enabled=1/enabled=1/g' feeds/luci/applications/luci-app-smartdns/root/etc/config/smartdns || true
+
+          # =========================
+          # Passwall 轻量优化
+          # =========================
+          sed -i 's/auto_switch=1/auto_switch=0/g' package/*/luci-app-passwall/root/etc/config/passwall || true
+
+          # =========================
+          # PVE / NAT 性能优化
+          # =========================
+          echo "net.netfilter.nf_conntrack_max=65536" >> package/base-files/files/etc/sysctl.conf
+          echo "net.ipv4.tcp_fin_timeout=30" >> package/base-files/files/etc/sysctl.conf
+
+      # =========================
       # 🔨 BUILD
       # =========================
       - name: Build Firmware
@@ -106,10 +130,3 @@ jobs:
       # =========================
       # 📦 RELEASE
       # =========================
-      - name: Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: B1r8-v4-stable-network
-          files: openwrt/bin/targets/**/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
