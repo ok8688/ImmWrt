@@ -1,4 +1,4 @@
-name: B1r8 Safe Fix Build
+name: B1r8 v2 Stable Enhanced
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ jobs:
         uses: actions/checkout@v4
 
       # =========================
-      # 🧠 环境（稳定）
+      # 🧠 环境
       # =========================
       - name: Init Environment
         run: |
@@ -20,14 +20,14 @@ jobs:
           sudo apt install -y build-essential git wget libncurses5-dev libssl-dev python3-distutils jq
 
       # =========================
-      # 📥 Clone（加失败保护）
+      # 📥 Clone（稳定）
       # =========================
       - name: Clone OpenWrt
         run: |
           git clone --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt || exit 1
 
       # =========================
-      # 📦 Feeds（关键修复点）
+      # 📦 Feeds（增强稳定）
       # =========================
       - name: Feeds
         run: |
@@ -36,7 +36,7 @@ jobs:
           ./scripts/feeds install -a || exit 1
 
       # =========================
-      # ⚙️ Config Base
+      # ⚙️ Config Base（在你原基础上微调）
       # =========================
       - name: Config Base
         run: |
@@ -63,13 +63,52 @@ jobs:
 
           echo "CONFIG_PACKAGE_luci-app-passwall=y" >> .config
 
+          # =========================
+          # 🚀 PVE / N100 性能增强
+          # =========================
           echo "CONFIG_PACKAGE_kmod-virtio-net=y" >> .config
           echo "CONFIG_PACKAGE_kmod-virtio-blk=y" >> .config
+          echo "CONFIG_PACKAGE_kmod-nft-offload=y" >> .config
+          echo "CONFIG_PACKAGE_kmod-igc=y" >> .config
 
           make defconfig
 
       # =========================
-      # 🔨 Build（关键修复点）
+      # 🔧 Optimize（只增强不破坏）
+      # =========================
+      - name: Optimize Setup
+        run: |
+          cd openwrt
+
+          # Argon（安全写法）
+          sed -i "s/bootstrap/argon/g" feeds/luci/modules/luci-base/root/etc/config/luci || true
+
+          # flow offload（稳定增强）
+          sed -i '/flow_offloading/d' package/network/config/firewall/files/firewall.config || true
+          echo " option flow_offloading '1'" >> package/network/config/firewall/files/firewall.config
+
+          # =========================
+          # 🚀 UPnP 真正自动启用（修复重点）
+          # =========================
+          mkdir -p files/etc/uci-defaults
+
+          cat > files/etc/uci-defaults/99-upnp << 'EOF'
+#!/bin/sh
+
+uci set upnpd.config.enabled='1' 2>/dev/null
+uci set upnpd.config.secure_mode='0' 2>/dev/null
+uci commit upnpd 2>/dev/null
+
+/etc/init.d/miniupnpd enable
+/etc/init.d/miniupnpd restart
+
+exit 0
+EOF
+
+          chmod +x files/etc/uci-defaults/99-upnp
+
+      # =========================
+      # 🔨 Build（稳定输出）
       # =========================
       - name: Build Firmware
         run: |
@@ -82,7 +121,7 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: B1r8-safe
+          tag_name: B1r8-v2-stable
           files: openwrt/bin/targets/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
