@@ -28,7 +28,7 @@ jobs:
           ./scripts/feeds install -a
 
       # =========================
-      # 🚨 新增：UPnP 开机自启修复
+      # 🚨 UPnP 开机自启（已修复版本）
       # =========================
       - name: Enable UPnP Auto Start
         run: |
@@ -36,19 +36,12 @@ jobs:
 
           mkdir -p files/etc/uci-defaults
 
-          cat > files/etc/uci-defaults/99-upnp << 'EOF'
-#!/bin/sh
-
-# 启用并启动 UPnP
-/etc/init.d/miniupnpd enable >/dev/null 2>&1
-/etc/init.d/miniupnpd restart >/dev/null 2>&1
-
-# 写入配置（防止不生效）
-uci set upnpd.config.enabled='1' >/dev/null 2>&1
-uci commit upnpd >/dev/null 2>&1
-
-exit 0
-EOF
+          echo "#!/bin/sh" > files/etc/uci-defaults/99-upnp
+          echo "/etc/init.d/miniupnpd enable >/dev/null 2>&1" >> files/etc/uci-defaults/99-upnp
+          echo "/etc/init.d/miniupnpd restart >/dev/null 2>&1" >> files/etc/uci-defaults/99-upnp
+          echo "uci set upnpd.config.enabled='1' >/dev/null 2>&1" >> files/etc/uci-defaults/99-upnp
+          echo "uci commit upnpd >/dev/null 2>&1" >> files/etc/uci-defaults/99-upnp
+          echo "exit 0" >> files/etc/uci-defaults/99-upnp
 
           chmod +x files/etc/uci-defaults/99-upnp
 
