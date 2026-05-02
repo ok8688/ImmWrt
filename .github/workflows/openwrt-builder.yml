@@ -1,4 +1,4 @@
-name: B1r8 Full Stable FINAL FIX
+name: B1r8 Full Stable FINAL CLEAN
 
 on:
   workflow_dispatch:
@@ -73,7 +73,7 @@ jobs:
           echo " option flow_offloading '1'" >> package/network/config/firewall/files/firewall.config
 
           # =========================
-          # UPnP 自启（安全版）
+          # UPnP（安全版）
           # =========================
           mkdir -p files/etc/uci-defaults
 
@@ -96,7 +96,7 @@ EOF
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: B1r8-Final-FIXED
+          tag_name: B1r8-Final-CLEAN
           files: openwrt/bin/targets/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
