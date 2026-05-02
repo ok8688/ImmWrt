@@ -1,4 +1,4 @@
-name: B1r8 Safe Fix Build
+name: B1r8 Safe Fix Upgrade
 
 on:
   workflow_dispatch:
@@ -28,23 +28,8 @@ jobs:
           ./scripts/feeds install -a
 
       # =========================
-      # 🚨 UPnP 开机自启（已修复版本）
+      # ⚙️ Config Base（保持你原版）
       # =========================
-      - name: Enable UPnP Auto Start
-        run: |
-          cd openwrt
-
-          mkdir -p files/etc/uci-defaults
-
-          echo "#!/bin/sh" > files/etc/uci-defaults/99-upnp
-          echo "/etc/init.d/miniupnpd enable >/dev/null 2>&1" >> files/etc/uci-defaults/99-upnp
-          echo "/etc/init.d/miniupnpd restart >/dev/null 2>&1" >> files/etc/uci-defaults/99-upnp
-          echo "uci set upnpd.config.enabled='1' >/dev/null 2>&1" >> files/etc/uci-defaults/99-upnp
-          echo "uci commit upnpd >/dev/null 2>&1" >> files/etc/uci-defaults/99-upnp
-          echo "exit 0" >> files/etc/uci-defaults/99-upnp
-
-          chmod +x files/etc/uci-defaults/99-upnp
-
       - name: Config Base
         run: |
           cd openwrt
@@ -76,15 +61,76 @@ jobs:
 
           make defconfig
 
+      # =========================
+      # 🧠 Optimize Upgrade（核心升级）
+      # =========================
+      - name: Optimize Setup
+        run: |
+          cd openwrt
+
+          # -------------------------
+          # Argon（安全写法）
+          # -------------------------
+          sed -i "s/bootstrap/argon/g" \
+          feeds/luci/modules/luci-base/root/etc/config/luci || true
+
+          # -------------------------
+          # flow offload
+          # -------------------------
+          sed -i '/flow_offloading/d' \
+          package/network/config/firewall/files/firewall.config || true
+
+          echo "option flow_offloading '1'" >> \
+          package/network/config/firewall/files/firewall.config
+
+          # ==================================================
+          # 🚨 挂载点删除（稳定 jq 版 - 不会炸）
+          # ==================================================
+          MENU_DIR="feeds/luci/modules/luci-mod-system/root/usr/share/luci/menu.d"
+
+          if [ -d "$MENU_DIR" ]; then
+            for f in $MENU_DIR/*.json; do
+              [ -f "$f" ] || continue
+              jq 'del(."admin/system/mounts", ."admin/services/mounts")' "$f" \
+              > tmp.json && mv tmp.json "$f" || true
+            done
+          fi
+
+          # ==================================================
+          # 🚨 UPnP 安全自启（带 fallback）
+          # ==================================================
+          mkdir -p files/etc/uci-defaults
+
+          cat > files/etc/uci-defaults/99-upnp << 'EOF'
+#!/bin/sh
+
+# 可能存在/可能不存在 -> 全部容错
+/etc/init.d/miniupnpd enable >/dev/null 2>&1 || true
+/etc/init.d/miniupnpd start >/dev/null 2>&1 || true
+
+uci set upnpd.config.enabled='1' >/dev/null 2>&1 || true
+uci commit upnpd >/dev/null 2>&1 || true
+
+exit 0
+EOF
+
+          chmod +x files/etc/uci-defaults/99-upnp
+
+      # =========================
+      # 🔨 Build
+      # =========================
       - name: Build Firmware
         run: |
           cd openwrt
-          make -j$(nproc)
+          make -j$(nproc) || make -j1 V=s
 
+      # =========================
+      # 📦 Release
+      # =========================
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: B1r8-safe
+          tag_name: B1r8-UPGRADE
           files: openwrt/bin/targets/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
