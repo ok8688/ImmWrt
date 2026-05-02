@@ -1,4 +1,4 @@
-name: B1r8 Final Clean Build
+name: B1r8 Final Locked Build
 
 on:
   workflow_dispatch:
@@ -11,94 +11,85 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # =========================
+      # 🧱 基础环境（最小稳定）
+      # =========================
       - name: Init Environment
         run: |
           sudo apt update
-          sudo apt install -y build-essential git wget libncurses5-dev libssl-dev python3-distutils jq
-
-      - name: Clone OpenWrt
-        run: |
-          git clone --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
-
-      - name: Feeds
-        run: |
-          cd openwrt
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
-
-      - name: Config Base
-        run: |
-          cd openwrt
-          rm -f .config
-
-          echo "CONFIG_TARGET_x86=y" >> .config
-          echo "CONFIG_TARGET_x86_64=y" >> .config
-          echo "CONFIG_TARGET_x86_64_DEVICE_generic=y" >> .config
-          echo "CONFIG_TARGET_ROOTFS_PARTSIZE=2048" >> .config
-
-          echo "CONFIG_PACKAGE_luci=y" >> .config
-          echo "CONFIG_PACKAGE_luci-light=y" >> .config
-
-          echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-argon-config=y" >> .config
-
-          echo "CONFIG_PACKAGE_luci-app-ttyd=y" >> .config
-
-          echo "CONFIG_PACKAGE_luci-app-upnp=y" >> .config
-          echo "CONFIG_PACKAGE_miniupnpd=y" >> .config
-
-          echo "CONFIG_PACKAGE_dnsmasq-full=y" >> .config
-          echo "CONFIG_PACKAGE_smartdns=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-smartdns=y" >> .config
-
-          echo "CONFIG_PACKAGE_luci-app-ddns=y" >> .config
-          echo "CONFIG_PACKAGE_ddns-scripts-cloudflare=y" >> .config
-
-          # =========================
-          # Passwall + 核心补齐（新增）
-          # =========================
-          echo "CONFIG_PACKAGE_luci-app-passwall=y" >> .config
-          echo "CONFIG_PACKAGE_xray-core=y" >> .config
-          echo "CONFIG_PACKAGE_sing-box=y" >> .config
-
-          echo "CONFIG_PACKAGE_luci-app-reboot=y" >> .config
-
-          echo "CONFIG_PACKAGE_htop=y" >> .config
-          echo "CONFIG_PACKAGE_curl=y" >> .config
-
-          echo "CONFIG_PACKAGE_kmod-virtio-net=y" >> .config
-          echo "CONFIG_PACKAGE_kmod-virtio-blk=y" >> .config
-
-          echo "CONFIG_PACKAGE_luci-app-fstab=n" >> .config
-          echo "CONFIG_PACKAGE_block-mount=n" >> .config
-          echo "CONFIG_PACKAGE_blockd=n" >> .config
-
-          make defconfig
+          sudo apt install -y build-essential git wget curl xz-utils
 
       # =========================
-      # UPnP（修正版：立即生效 + 开机启用）
+      # 📥 固定 ImageBuilder（锁版本）
       # =========================
-      - name: Enable UPnP on boot
+      - name: Download ImageBuilder
         run: |
-          cd openwrt
-          mkdir -p files/etc/uci-defaults
+          wget https://downloads.immortalwrt.org/releases/25.12.0/targets/x86/64/immortalwrt-imagebuilder-25.12.0-x86-64.Linux-x86_64.tar.xz
+          tar -xf *.tar.xz
+          mv immortalwrt-imagebuilder* builder
 
-          echo "#!/bin/sh" > files/etc/uci-defaults/99-upnp
-          echo "uci set upnpd.config.enabled='1'" >> files/etc/uci-defaults/99-upnp
-          echo "uci commit upnpd" >> files/etc/uci-defaults/99-upnp
-          echo "/etc/init.d/miniupnpd enable" >> files/etc/uci-defaults/99-upnp
-          echo "/etc/init.d/miniupnpd start" >> files/etc/uci-defaults/99-upnp
-          echo "exit 0" >> files/etc/uci-defaults/99-upnp
-
-          chmod +x files/etc/uci-defaults/99-upnp
-
+      # =========================
+      # 🟢 固定包（你的 228 逻辑源）
+      # =========================
       - name: Build Firmware
         run: |
-          cd openwrt
-          make -j$(nproc) || make -j1 V=s
+          cd builder
 
+          make image \
+          PROFILE="generic" \
+          PACKAGES="apk-openssl base-files ca-bundle dnsmasq-full dropbear firewall4 fstools grub2-bios-setup kmod-button-hotplug kmod-fs-f2fs kmod-nft-offload libc libgcc libustream-openssl logd mkf2fs mtd netifd nftables odhcp6c odhcpd-ipv6only ppp ppp-mod-pppoe procd-ujail uci uclient-fetch urandom-seed urngd \
+          luci luci-light luci-theme-argon luci-app-argon-config \
+          luci-app-passwall luci-app-smartdns luci-app-ddns luci-app-upnp luci-app-ttyd luci-app-advanced-reboot \
+          luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-opkg-zh-cn luci-i18n-passwall-zh-cn luci-i18n-smartdns-zh-cn luci-i18n-ddns-zh-cn luci-i18n-upnp-zh-cn luci-i18n-ttyd-zh-cn luci-i18n-advanced-reboot-zh-cn \
+          ddns-scripts-cloudflare \
+          htop nano curl wget-ssl \
+          intel-microcode qemu-ga \
+          " \
+          FILES=../files
+
+      # =========================
+      # ⚙️ UPnP 自动启用（固定行为）
+      # =========================
+      - name: UPnP Enable
+        run: |
+          mkdir -p files/etc/uci-defaults
+
+          cat > files/etc/uci-defaults/99-upnp << 'EOF'
+#!/bin/sh
+uci set upnpd.config.enabled='1'
+uci commit upnpd
+/etc/init.d/miniupnpd enable
+exit 0
+EOF
+
+      # =========================
+      # 📊 固件大小输出（你要的）
+      # =========================
+      - name: Show Firmware Info
+        run: |
+          echo "===== FILES ====="
+          ls -lh builder/bin/targets/** || true
+
+          echo ""
+          echo "===== SIZE ====="
+          du -h builder/bin/targets/** || true
+
+      # =========================
+      # 📦 Artifact（备用下载）
+      # =========================
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: firmware
-          path: openwrt/bin/targets/**/*
+          name: b1r8-final
+          path: builder/bin/targets/**/*
+
+      # =========================
+      # 🚀 Release（主下载入口）
+      # =========================
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: B1r8-Final
+          files: builder/bin/targets/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
