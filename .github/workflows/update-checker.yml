@@ -1,4 +1,4 @@
-name: B1r8 Step-Up Stable Full
+name: B1r8 Safe Fix Build
 
 on:
   workflow_dispatch:
@@ -8,36 +8,25 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      # =========================
-      # 🧠 基础环境
-      # =========================
-      - name: Init
+      - name: Init Environment
         run: |
           sudo apt update
           sudo apt install -y build-essential git wget \
           libncurses5-dev libssl-dev python3-distutils jq
 
-      # =========================
-      # 📥 Clone（稳定源）
-      # =========================
       - name: Clone OpenWrt
         run: |
           git clone --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      # =========================
-      # 📦 Feeds（关键）
-      # =========================
       - name: Feeds
         run: |
           cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      # =========================
-      # ⚙️ Base Config（稳定内核）
-      # =========================
       - name: Config Base
         run: |
           cd openwrt
@@ -47,75 +36,37 @@ jobs:
           echo "CONFIG_TARGET_x86_64=y" >> .config
           echo "CONFIG_TARGET_x86_64_DEVICE_generic=y" >> .config
 
-          # 📦 2GB rootfs
           echo "CONFIG_TARGET_ROOTFS_PARTSIZE=2048" >> .config
 
-          make defconfig
-
-      # =========================
-      # 🧠 Stage 1：基础 LuCI
-      # =========================
-      - name: Stage 1 LuCI
-        run: |
-          cd openwrt
-
           echo "CONFIG_PACKAGE_luci=y" >> .config
-          echo "CONFIG_PACKAGE_luci-light=y" >> .config
-
-          make defconfig
-
-      # =========================
-      # 🎨 Stage 2：主题 + UI
-      # =========================
-      - name: Stage 2 UI
-        run: |
-          cd openwrt
-
           echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-ttyd=y" >> .config
 
-          make defconfig
-
-      # =========================
-      # 🌐 Stage 3：网络基础服务
-      # =========================
-      - name: Stage 3 Network
-        run: |
-          cd openwrt
-
-          echo "CONFIG_PACKAGE_dnsmasq-full=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-upnp=y" >> .config
           echo "CONFIG_PACKAGE_miniupnpd=y" >> .config
 
-          make defconfig
-
-      # =========================
-      # 🧠 Stage 4：高级功能（可选）
-      # =========================
-      - name: Stage 4 Advanced
-        run: |
-          cd openwrt
+          echo "CONFIG_PACKAGE_dnsmasq-full=y" >> .config
+          echo "CONFIG_PACKAGE_smartdns=y" >> .config
 
           echo "CONFIG_PACKAGE_luci-app-ddns=y" >> .config
           echo "CONFIG_PACKAGE_ddns-scripts-cloudflare=y" >> .config
 
+          echo "CONFIG_PACKAGE_luci-app-passwall=y" >> .config
+
+          echo "CONFIG_PACKAGE_kmod-virtio-net=y" >> .config
+          echo "CONFIG_PACKAGE_kmod-virtio-blk=y" >> .config
+
           make defconfig
 
-      # =========================
-      # 🚀 Build（稳定模式）
-      # =========================
       - name: Build Firmware
         run: |
           cd openwrt
-          make -j1 V=s || make -j1
+          make -j$(nproc)
 
-      # =========================
-      # 📦 Release
-      # =========================
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: B1r8-Step-Up
+          tag_name: B1r8-safe
           files: openwrt/bin/targets/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
