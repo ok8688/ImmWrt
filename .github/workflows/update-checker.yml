@@ -1,4 +1,4 @@
-name: B1r8 v5 Stable Architecture
+name: B1r8 Final Clean Build
 
 on:
   workflow_dispatch:
@@ -11,122 +11,109 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # =========================
-      # 🧠 Environment
-      # =========================
       - name: Init Environment
         run: |
           sudo apt update
           sudo apt install -y build-essential git wget libncurses5-dev libssl-dev python3-distutils jq
 
-      # =========================
-      # 📥 Clone
-      # =========================
       - name: Clone OpenWrt
         run: |
-          for i in 1 2 3; do
-            git clone --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt && break
-            echo "retry $i"
-            sleep 5
-          done
+          git clone --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      # =========================
-      # 📦 Feeds
-      # =========================
       - name: Feeds
         run: |
           cd openwrt
-          ./scripts/feeds update -a || exit 1
-          ./scripts/feeds install -a || exit 1
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
-      # =========================
-      # ⚙️ Config Base
-      # =========================
       - name: Config Base
         run: |
           cd openwrt
           rm -f .config
 
+          # 架构 + 2GB
           echo "CONFIG_TARGET_x86=y" >> .config
           echo "CONFIG_TARGET_x86_64=y" >> .config
           echo "CONFIG_TARGET_x86_64_DEVICE_generic=y" >> .config
           echo "CONFIG_TARGET_ROOTFS_PARTSIZE=2048" >> .config
 
+          # LuCI
           echo "CONFIG_PACKAGE_luci=y" >> .config
+          echo "CONFIG_PACKAGE_luci-light=y" >> .config
+
+          # 主题
           echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-argon-config=y" >> .config
+
+          # 终端
           echo "CONFIG_PACKAGE_luci-app-ttyd=y" >> .config
 
+          # UPnP
           echo "CONFIG_PACKAGE_luci-app-upnp=y" >> .config
           echo "CONFIG_PACKAGE_miniupnpd=y" >> .config
 
+          # DNS
           echo "CONFIG_PACKAGE_dnsmasq-full=y" >> .config
           echo "CONFIG_PACKAGE_smartdns=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-smartdns=y" >> .config
 
+          # DDNS
           echo "CONFIG_PACKAGE_luci-app-ddns=y" >> .config
           echo "CONFIG_PACKAGE_ddns-scripts-cloudflare=y" >> .config
 
+          # Passwall
           echo "CONFIG_PACKAGE_luci-app-passwall=y" >> .config
 
+          # 重启/关机
+          echo "CONFIG_PACKAGE_luci-app-reboot=y" >> .config
+
+          # 工具
+          echo "CONFIG_PACKAGE_htop=y" >> .config
+          echo "CONFIG_PACKAGE_curl=y" >> .config
+
+          # PVE
           echo "CONFIG_PACKAGE_kmod-virtio-net=y" >> .config
           echo "CONFIG_PACKAGE_kmod-virtio-blk=y" >> .config
 
-          echo "CONFIG_PACKAGE_kmod-nft-offload=y" >> .config
-          echo "CONFIG_PACKAGE_kmod-nf-flow=y" >> .config
+          # ❌ 删除挂载点
+          echo "CONFIG_PACKAGE_luci-app-fstab=n" >> .config
+          echo "CONFIG_PACKAGE_block-mount=n" >> .config
+          echo "CONFIG_PACKAGE_blockd=n" >> .config
 
           make defconfig
 
-      # =========================
-      # 📦 DOWNLOAD
-      # =========================
-      - name: Download Packages
+      - name: Enable UPnP on boot
         run: |
           cd openwrt
-          make download -j8  make download -j1 V=s  exit 1
+          mkdir -p files/etc/uci-defaults
 
-      # =========================
-      # 🧠 CLEAN
-      # =========================
-      - name: Clean Build Cache
-        run: |
-          cd openwrt
-          rm -rf tmp || true
-          rm -rf logs || true
+          cat > files/etc/uci-defaults/99-upnp << 'EOF'
+#!/bin/sh
+uci set upnpd.config.enabled='1' 2>/dev/null
+uci commit upnpd 2>/dev/null
+/etc/init.d/miniupnpd enable 2>/dev/null
+exit 0
+EOF
 
-      # =========================
-      # 🧠 NETWORK ARCH OPTIMIZE（核心升级）
-      # =========================
-      - name: Network Architecture Optimize
-        run: |
-          cd openwrt
+          chmod +x files/etc/uci-defaults/99-upnp
 
-          # =========================
-          # DNS 架构稳定化
-          # =========================
-          sed -i '/server=/d' package/network/services/dnsmasq/files/dhcp.conf || true
-          echo "server=127.0.0.1#5335" >> package/network/services/dnsmasq/files/dhcp.conf
-
-          # smartdns 避免冲突
-          sed -i 's/enabled=1/enabled=1/g' feeds/luci/applications/luci-app-smartdns/root/etc/config/smartdns || true
-
-          # =========================
-          # Passwall 轻量优化
-          # =========================
-          sed -i 's/auto_switch=1/auto_switch=0/g' package/*/luci-app-passwall/root/etc/config/passwall || true
-
-          # =========================
-          # PVE / NAT 性能优化
-          # =========================
-          echo "net.netfilter.nf_conntrack_max=65536" >> package/base-files/files/etc/sysctl.conf
-          echo "net.ipv4.tcp_fin_timeout=30" >> package/base-files/files/etc/sysctl.conf
-
-      # =========================
-      # 🔨 BUILD
-      # =========================
       - name: Build Firmware
         run: |
           cd openwrt
           make -j$(nproc) || make -j1 V=s
 
-      # =========================
-      # 📦 RELEASE
-      # =========================
+      # ✅ 修复：每次生成唯一 Release
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: B1r8-Final-${{ github.run_number }}
+          files: openwrt/bin/targets/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ✅ 保险下载（推荐保留）
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: openwrt/bin/targets/**/*
