@@ -54,7 +54,12 @@ jobs:
           echo "CONFIG_PACKAGE_luci-app-ddns=y" >> .config
           echo "CONFIG_PACKAGE_ddns-scripts-cloudflare=y" >> .config
 
+          # =========================
+          # Passwall + 核心补齐（新增）
+          # =========================
           echo "CONFIG_PACKAGE_luci-app-passwall=y" >> .config
+          echo "CONFIG_PACKAGE_xray-core=y" >> .config
+          echo "CONFIG_PACKAGE_sing-box=y" >> .config
 
           echo "CONFIG_PACKAGE_luci-app-reboot=y" >> .config
 
@@ -70,16 +75,21 @@ jobs:
 
           make defconfig
 
-      # ✅ 改成最安全写法（关键修复）
+      # =========================
+      # UPnP（修正版：立即生效 + 开机启用）
+      # =========================
       - name: Enable UPnP on boot
         run: |
           cd openwrt
           mkdir -p files/etc/uci-defaults
+
           echo "#!/bin/sh" > files/etc/uci-defaults/99-upnp
           echo "uci set upnpd.config.enabled='1'" >> files/etc/uci-defaults/99-upnp
           echo "uci commit upnpd" >> files/etc/uci-defaults/99-upnp
           echo "/etc/init.d/miniupnpd enable" >> files/etc/uci-defaults/99-upnp
+          echo "/etc/init.d/miniupnpd start" >> files/etc/uci-defaults/99-upnp
           echo "exit 0" >> files/etc/uci-defaults/99-upnp
+
           chmod +x files/etc/uci-defaults/99-upnp
 
       - name: Build Firmware
