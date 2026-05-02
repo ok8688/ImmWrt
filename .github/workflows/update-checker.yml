@@ -11,39 +11,48 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # =========================
+      # 🧱 环境（补 xz + 防 tar 红X）
+      # =========================
       - name: Init Environment
         run: |
           sudo apt update
-          sudo apt install -y build-essential git wget curl xz-utils
+          sudo apt install -y build-essential git wget curl xz-utils ca-certificates
 
       # =========================
-      # 🔥 FIX 1：补 feed（你红X根源）
+      # 🔍 DEBUG 1（解决你“全红”的关键）
       # =========================
-      - name: Prepare Feeds
+      - name: DEBUG Network + Download
         run: |
-          echo "src-git passwall https://github.com/xiaorouji/openwrt-passwall.git" >> feeds.conf.default || true
+          wget -O imagebuilder.tar.xz https://downloads.immortalwrt.org/releases/25.12.0/targets/x86/64/immortalwrt-imagebuilder-25.12.0-x86-64.Linux-x86_64.tar.xz
+          ls -lh imagebuilder.tar.xz
 
       # =========================
-      # 📥 ImageBuilder
+      # 📦 解压（加错误检测）
       # =========================
-      - name: Download ImageBuilder
+      - name: Extract ImageBuilder
         run: |
-          wget -q https://downloads.immortalwrt.org/releases/25.12.0/targets/x86/64/immortalwrt-imagebuilder-25.12.0-x86-64.Linux-x86_64.tar.xz
-          tar -xf *.tar.xz
+          set -e
+          tar -xf imagebuilder.tar.xz
           mv immortalwrt-imagebuilder* builder
+          ls -lah builder
 
       # =========================
-      # 🔥 Build（唯一核心修复点：set -e）
+      # 🔥 Build（真正核心）
       # =========================
       - name: Build Firmware
         run: |
           set -e
           cd builder
 
-          make image PROFILE="generic" PACKAGES="apk-openssl base-files ca-bundle dnsmasq-full dropbear firewall4 fstools grub2-bios-setup kmod-button-hotplug kmod-fs-f2fs kmod-nft-offload libc libgcc libustream-openssl logd mkf2fs mtd netifd nftables odhcp6c odhcpd-ipv6only ppp ppp-mod-pppoe procd-ujail uci uclient-fetch urandom-seed urngd luci luci-i18n-base-zh-cn luci-i18n-opkg-zh-cn luci-i18n-firewall-zh-cn luci-theme-argon luci-app-argon-config luci-app-passwall luci-i18n-passwall-zh-cn luci-app-smartdns luci-i18n-smartdns-zh-cn luci-app-ddns luci-i18n-ddns-zh-cn ddns-scripts-cloudflare luci-app-ttyd luci-i18n-ttyd-zh-cn luci-app-advanced-reboot luci-i18n-advanced-reboot-zh-cn luci-app-upnp luci-i18n-upnp-zh-cn qemu-ga htop nano unzip curl wget-ssl intel-microcode" FILES=../files
+          echo "=== START BUILD ==="
+
+          make image PROFILE="generic" \
+          PACKAGES="apk-openssl base-files ca-bundle dnsmasq-full dropbear firewall4 fstools grub2-bios-setup kmod-button-hotplug kmod-fs-f2fs kmod-nft-offload libc libgcc libustream-openssl logd mkf2fs mtd netifd nftables odhcp6c odhcpd-ipv6only ppp ppp-mod-pppoe procd-ujail uci uclient-fetch urandom-seed urngd luci luci-theme-argon luci-app-argon-config luci-app-passwall luci-app-smartdns luci-app-ddns luci-app-ttyd luci-app-advanced-reboot luci-app-upnp ddns-scripts-cloudflare htop nano unzip curl wget-ssl intel-microcode qemu-ga" \
+          FILES=../files
 
       # =========================
-      # ⚙️ UPnP 自动启用
+      # ⚙️ UPnP（保持）
       # =========================
       - name: UPnP Enable
         run: |
@@ -58,14 +67,17 @@ exit 0
 EOF
 
       # =========================
-      # 📊 size
+      # 📊 DEBUG 2（这一步能直接告诉你红X原因）
       # =========================
-      - name: Show Size
+      - name: DEBUG Build Output
         run: |
-          du -h builder/bin/targets/** || true
+          echo "===== TARGET DIR ====="
+          ls -lah builder/bin/targets || true
+          echo "===== SIZE ====="
+          du -h builder/bin/targets || true
 
       # =========================
-      # 📦 artifact
+      # 📦 Artifact
       # =========================
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -74,7 +86,7 @@ EOF
           path: builder/bin/targets/**/*
 
       # =========================
-      # 🚀 release
+      # 🚀 Release
       # =========================
       - name: Release
         uses: softprops/action-gh-release@v2
