@@ -1,141 +1,14 @@
-name: B1r8 Final Stable Build
+name: TEST CI
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-22.04
 
     steps:
-      - uses: actions/checkout@v4
-
-      # =========================
-      # 🧠 Init
-      # =========================
-      - name: Init
+      - name: Hello
         run: |
-          sudo apt update
-          sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib \
-          gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget jq || true
-
-      # =========================
-      # 📥 Clone
-      # =========================
-      - name: Clone
-        run: |
-          git clone --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
-
-      # =========================
-      # 📦 Feeds
-      # =========================
-      - name: Feeds
-        run: |
-          cd openwrt
-          ./scripts/feeds update -a || true
-          ./scripts/feeds install -a || true
-
-      # =========================
-      # ⚙️ Config
-      # =========================
-      - name: Config
-        run: |
-          cd openwrt
-          rm -f .config
-
-          echo "CONFIG_TARGET_x86=y" >> .config
-          echo "CONFIG_TARGET_x86_64=y" >> .config
-          echo "CONFIG_TARGET_x86_64_DEVICE_generic=y" >> .config
-
-          echo "CONFIG_TARGET_ROOTFS_PARTSIZE=2048" >> .config
-
-          echo "CONFIG_PACKAGE_luci=y" >> .config
-          echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-passwall=y" >> .config
-
-          echo "CONFIG_PACKAGE_dnsmasq-full=y" >> .config
-          echo "CONFIG_PACKAGE_smartdns=y" >> .config
-
-          echo "CONFIG_PACKAGE_luci-app-upnp=y" >> .config
-
-          echo "CONFIG_PACKAGE_kmod-virtio-net=y" >> .config
-          echo "CONFIG_PACKAGE_kmod-virtio-blk=y" >> .config
-
-          echo "CONFIG_PACKAGE_luci-app-fstab=n" >> .config
-          echo "CONFIG_PACKAGE_block-mount=n" >> .config
-
-          make defconfig
-
-      # =========================
-      # 🧠 Optimize（100%容错）
-      # =========================
-      - name: Optimize
-        run: |
-          cd openwrt
-
-          # Argon
-          sed -i "s/bootstrap/argon/g" feeds/luci/modules/luci-base/root/etc/config/luci || true
-
-          # flow offload
-          sed -i '/flow_offloading/d' package/network/config/firewall/files/firewall.config || true
-          echo "	option flow_offloading '1'" >> package/network/config/firewall/files/firewall.config || true
-
-          # =========================
-          # 🚨 挂载点（不允许失败）
-          # =========================
-          MENU_DIR="feeds/luci/modules/luci-mod-system/root/usr/share/luci/menu.d"
-
-          if [ -d "$MENU_DIR" ]; then
-            for f in $MENU_DIR/*.json; do
-              [ -f "$f" ] || continue
-
-              # jq 不存在 / 失败 → 不影响编译
-              jq 'del(."admin/system/mounts", ."admin/services/mounts")' "$f" \
-              > tmp.json 2>/dev/null && mv tmp.json "$f" || true
-            done
-          fi
-
-          # =========================
-          # 🚨 UPnP 自动适配
-          # =========================
-          mkdir -p files/etc/uci-defaults
-
-          cat > files/etc/uci-defaults/99-upnp << 'EOF'
-#!/bin/sh
-
-uci set upnpd.config.enabled='1' 2>/dev/null
-uci commit upnpd 2>/dev/null
-
-if [ -x /etc/init.d/miniupnpd ]; then
-  /etc/init.d/miniupnpd enable
-  /etc/init.d/miniupnpd restart
-fi
-
-if [ -x /etc/init.d/miniupnpd-nftables ]; then
-  /etc/init.d/miniupnpd-nftables enable
-  /etc/init.d/miniupnpd-nftables restart
-fi
-
-exit 0
-EOF
-
-          chmod +x files/etc/uci-defaults/99-upnp
-
-      # =========================
-      # 🔨 Build（防炸）
-      # =========================
-      - name: Build
-        run: |
-          cd openwrt
-          make -j$(nproc) || make -j1 V=s || make -j1
-
-      # =========================
-      # 📦 Release（稳定）
-      # =========================
-      - name: Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: B1r8-Final-Stable
-          files: openwrt/bin/targets/**/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "CI OK"
+          uname -a
