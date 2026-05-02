@@ -1,4 +1,4 @@
-name: B1r8 v3 Stable Pro
+name: B1r8 v4 Stable Network Pro
 
 on:
   workflow_dispatch:
@@ -40,7 +40,7 @@ jobs:
           ./scripts/feeds install -a || exit 1
 
       # =========================
-      # ⚙️ Config Base（干净版）
+      # ⚙️ Config Base
       # =========================
       - name: Config Base
         run: |
@@ -70,10 +70,16 @@ jobs:
           echo "CONFIG_PACKAGE_kmod-virtio-net=y" >> .config
           echo "CONFIG_PACKAGE_kmod-virtio-blk=y" >> .config
 
+          # =========================
+          # 🚀 网络性能增强（关键升级）
+          # =========================
+          echo "CONFIG_PACKAGE_kmod-nft-offload=y" >> .config
+          echo "CONFIG_PACKAGE_kmod-nf-flow=y" >> .config
+
           make defconfig
 
       # =========================
-      # 📦 DOWNLOAD（增强稳定核心）
+      # 📦 DOWNLOAD
       # =========================
       - name: Download Packages
         run: |
@@ -81,7 +87,7 @@ jobs:
           make download -j8  make download -j1 V=s  exit 1
 
       # =========================
-      # 🧠 CLEAN（减少失败概率）
+      # 🧠 CLEAN
       # =========================
       - name: Clean Build Cache
         run: |
@@ -90,7 +96,7 @@ jobs:
           rm -rf logs || true
 
       # =========================
-      # 🔨 BUILD（稳定输出）
+      # 🔨 BUILD
       # =========================
       - name: Build Firmware
         run: |
@@ -103,7 +109,7 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: B1r8-v3-stable-pro
+          tag_name: B1r8-v4-stable-network
           files: openwrt/bin/targets/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
