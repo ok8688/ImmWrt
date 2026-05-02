@@ -1,4 +1,4 @@
-name: B1r8 Full Stable FIX
+name: B1r8 Full Stable FINAL FIX
 
 on:
   workflow_dispatch:
@@ -10,34 +10,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # =========================
-      # 🧠 环境
-      # =========================
       - name: Init Environment
         run: |
           sudo apt update
           sudo apt install -y build-essential git wget \
           libncurses5-dev libssl-dev python3-distutils jq
 
-      # =========================
-      # 📥 Clone
-      # =========================
       - name: Clone OpenWrt
         run: |
           git clone --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      # =========================
-      # 📦 Feeds
-      # =========================
       - name: Feeds
         run: |
           cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      # =========================
-      # ⚙️ Config
-      # =========================
       - name: Config Base
         run: |
           cd openwrt
@@ -69,22 +57,23 @@ jobs:
 
           make defconfig
 
-      # =========================
-      # 🧠 Optimize（修复版）
-      # =========================
       - name: Optimize Setup
         run: |
           cd openwrt
 
-          # Argon
+          # =========================
+          # Argon（修复）
+          # =========================
           sed -i "s/bootstrap/argon/g" feeds/luci/modules/luci-base/root/etc/config/luci || true
 
-          # flow offload
+          # =========================
+          # flow offload（修复）
+          # =========================
           sed -i '/flow_offloading/d' package/network/config/firewall/files/firewall.config || true
           echo " option flow_offloading '1'" >> package/network/config/firewall/files/firewall.config
 
           # =========================
-          # 🚨 UPnP 自启
+          # UPnP 自启（安全版）
           # =========================
           mkdir -p files/etc/uci-defaults
 
@@ -99,21 +88,15 @@ EOF
 
           chmod +x files/etc/uci-defaults/99-upnp
 
-      # =========================
-      # 🔨 Build
-      # =========================
       - name: Build Firmware
         run: |
           cd openwrt
           make -j$(nproc) || make -j1 V=s
 
-      # =========================
-      # 📦 Release
-      # =========================
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: B1r8-Full-Stable
+          tag_name: B1r8-Final-FIXED
           files: openwrt/bin/targets/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
