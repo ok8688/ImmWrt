@@ -1,4 +1,4 @@
-name: OpenWrt B1r8 Stable Core Final
+name: Build OpenWrt B1r8
 
 on:
   workflow_dispatch:
@@ -10,135 +10,124 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # =========================
-      # 🧠 环境（避免 Python / distutils 问题）
-      # =========================
-      - name: Init Environment
+      - name: Init
         run: |
           sudo apt update
-          sudo apt install -y \
-            build-essential clang flex bison g++ gawk gcc-multilib \
-            gettext git libncurses-dev libssl-dev \
-            python3 python3-setuptools python3-pip \
-            rsync unzip zlib1g-dev file wget jq
+          sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib \
+          gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget
 
-      # =========================
-      # 📥 Clone（稳定）
-      # =========================
-      - name: Clone Source
+      - name: Clone
         run: |
-          git clone --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
+          git clone https://github.com/immortalwrt/immortalwrt.git openwrt
+          cd openwrt
+          git checkout openwrt-25.12
 
-      # =========================
-      # 📦 Feeds（强制失败退出，避免隐性红 X）
-      # =========================
-      - name: Update Feeds
+      - name: Feeds
         run: |
           cd openwrt
-          ./scripts/feeds update -a || exit 1
-          ./scripts/feeds install -a || exit 1
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
-      # =========================
-      # ⚙️ Config（稳定最小可用集）
-      # =========================
-      - name: Generate Config
+      - name: Config
         run: |
           cd openwrt
           rm -f .config
 
+          # 架构
           echo "CONFIG_TARGET_x86=y" >> .config
           echo "CONFIG_TARGET_x86_64=y" >> .config
-          echo "CONFIG_TARGET_x86_64_DEVICE_generic=y" >> .config
+          echo "CONFIG_TARGET_x86_generic=y" >> .config
 
-          # 2GB rootfs
+          # ✅ 2GB 分区
           echo "CONFIG_TARGET_ROOTFS_PARTSIZE=2048" >> .config
-          echo "CONFIG_TARGET_ROOTFS_EXT4FS=y" >> .config
 
           # LuCI
-          echo "CONFIG_PACKAGE_luci=y" >> .config
           echo "CONFIG_PACKAGE_luci-light=y" >> .config
+          echo "CONFIG_PACKAGE_luci-mod-admin-full=y" >> .config
+
+          # 中文
+          echo "CONFIG_LUCI_LANG_zh-cn=y" >> .config
+          echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
 
           # Argon
           echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-argon-config=y" >> .config
+          echo "CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y" >> .config
 
           # Passwall
           echo "CONFIG_PACKAGE_luci-app-passwall=y" >> .config
+          echo "CONFIG_PACKAGE_xray-core=y" >> .config
+          echo "CONFIG_PACKAGE_sing-box=y" >> .config
+          echo "CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y" >> .config
 
           # DNS
           echo "CONFIG_PACKAGE_dnsmasq-full=y" >> .config
           echo "CONFIG_PACKAGE_smartdns=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-smartdns=y" >> .config
+          echo "CONFIG_PACKAGE_luci-i18n-smartdns-zh-cn=y" >> .config
 
           # DDNS
           echo "CONFIG_PACKAGE_luci-app-ddns=y" >> .config
+          echo "CONFIG_PACKAGE_luci-i18n-ddns-zh-cn=y" >> .config
+          echo "CONFIG_PACKAGE_ddns-scripts-cloudflare=y" >> .config
 
-          # UPnP（稳定包名）
+          # UPnP
           echo "CONFIG_PACKAGE_luci-app-upnp=y" >> .config
-          echo "CONFIG_PACKAGE_miniupnpd=y" >> .config
+          echo "CONFIG_PACKAGE_miniupnpd-nftables=y" >> .config
 
-          # PVE / N100 virtio
-          echo "CONFIG_PACKAGE_kmod-virtio-net=y" >> .config
-          echo "CONFIG_PACKAGE_kmod-virtio-blk=y" >> .config
+          # ✅ 终端补齐
+          echo "CONFIG_PACKAGE_luci-app-ttyd=y" >> .config
+          echo "CONFIG_PACKAGE_ttyd=y" >> .config
+          echo "CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y" >> .config
+
+          # 高级重启
+          echo "CONFIG_PACKAGE_luci-app-advanced-reboot=y" >> .config
+          echo "CONFIG_PACKAGE_luci-i18n-advanced-reboot-zh-cn=y" >> .config
+
+          # 工具
+          echo "CONFIG_PACKAGE_htop=y" >> .config
+          echo "CONFIG_PACKAGE_nano=y" >> .config
+          echo "CONFIG_PACKAGE_curl=y" >> .config
+          echo "CONFIG_PACKAGE_wget-ssl=y" >> .config
+          echo "CONFIG_PACKAGE_qemu-ga=y" >> .config
+
+          # 网卡
+          echo "CONFIG_PACKAGE_kmod-igc=y" >> .config
+
+          # 性能
+          echo "CONFIG_PACKAGE_kmod-nft-offload=y" >> .config
+
+          # ❌ 彻底删除挂载点（关键）
+          echo "CONFIG_PACKAGE_luci-app-fstab=n" >> .config
+          echo "CONFIG_PACKAGE_luci-i18n-fstab-zh-cn=n" >> .config
+          echo "CONFIG_PACKAGE_block-mount=n" >> .config
 
           make defconfig
 
-      # =========================
-      # 🧠 优化（全部加安全兜底）
-      # =========================
       - name: Optimize
         run: |
           cd openwrt
 
           # Argon 默认
-          sed -i "s/bootstrap/argon/g" feeds/luci/modules/luci-base/root/etc/config/luci || true
+          sed -i "s/bootstrap/argon/g" feeds/luci/modules/luci-base/root/etc/config/luci
 
-          # Flow offload
-          sed -i '/flow_offloading/d' package/network/config/firewall/files/firewall.config || true
-          echo "	option flow_offloading '1'" >> package/network/config/firewall/files/firewall.config || true
+          # flow offload
+          sed -i '/option flow_offloading/d' package/network/config/firewall/files/firewall.config
+          echo "	option flow_offloading '1'" >> package/network/config/firewall/files/firewall.config
 
-          # =========================
-          # 🚨 挂载点删除（完全安全版）
-          # =========================
-          MENU_DIR="feeds/luci/modules/luci-mod-system/root/usr/share/luci/menu.d"
-
-          if [ -d "$MENU_DIR" ]; then
-            for f in $MENU_DIR/*.json; do
-              [ -f "$f" ] || continue
-              jq 'del(."admin/system/mounts", ."admin/services/mounts")' "$f" \
-              > tmp.json && mv tmp.json "$f" || true
-            done
-          fi
-
-          # =========================
-          # 🚨 UPnP 自动启用
-          # =========================
+          # ✅ UPnP 自启（标准方式）
           mkdir -p files/etc/uci-defaults
+          echo "/etc/init.d/miniupnpd enable" > files/etc/uci-defaults/99-upnp
 
-          cat > files/etc/uci-defaults/99-upnp << 'EOF'
-#!/bin/sh
-uci set upnpd.config.enabled='1' 2>/dev/null
-uci commit upnpd 2>/dev/null
-/etc/init.d/miniupnpd enable 2>/dev/null
-/etc/init.d/miniupnpd start 2>/dev/null
-exit 0
-EOF
-
-          chmod +x files/etc/uci-defaults/99-upnp
-
-      # =========================
-      # 🔨 Build（稳定单线程兜底）
-      # =========================
-      - name: Build Firmware
+      - name: Build
         run: |
           cd openwrt
-          make -j1 V=s || make -j1 V=s
+          make -j$(nproc)
 
-      # =========================
-      # 📦 Release（100%稳定输出）
-      # =========================
-      - name: Release Firmware
+      - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: B1r8-Stable-Core-Final
+          tag_name: B1r8
           files: openwrt/bin/targets/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
