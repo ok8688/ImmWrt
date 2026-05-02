@@ -1,14 +1,27 @@
-name: TEST CI
+name: B1r8 Minimal Build
 
 on:
   workflow_dispatch:
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Hello
+      - uses: actions/checkout@v4
+
+      - name: Init
         run: |
-          echo "CI OK"
-          uname -a
+          sudo apt update
+          sudo apt install -y build-essential git wget
+
+      - name: Clone
+        run: |
+          git clone --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
+
+      - name: Build Test
+        run: |
+          cd openwrt
+          echo "CONFIG_TARGET_x86=y" > .config
+          echo "CONFIG_TARGET_x86_64=y" >> .config
+          make defconfig
