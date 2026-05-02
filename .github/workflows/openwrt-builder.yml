@@ -1,4 +1,4 @@
-name: B1r8 Full Stable FINAL CLEAN
+name: B1r8 Full Stable FIXED
 
 on:
   workflow_dispatch:
@@ -34,7 +34,6 @@ jobs:
           echo "CONFIG_TARGET_x86=y" >> .config
           echo "CONFIG_TARGET_x86_64=y" >> .config
           echo "CONFIG_TARGET_x86_64_DEVICE_generic=y" >> .config
-
           echo "CONFIG_TARGET_ROOTFS_PARTSIZE=2048" >> .config
 
           echo "CONFIG_PACKAGE_luci=y" >> .config
@@ -68,7 +67,7 @@ jobs:
           sed -i '/flow_offloading/d' package/network/config/firewall/files/firewall.config || true
           echo " option flow_offloading '1'" >> package/network/config/firewall/files/firewall.config
 
-          # UPnP
+          # UPnP auto start
           mkdir -p files/etc/uci-defaults
 
           cat > files/etc/uci-defaults/99-upnp << 'EOF'
@@ -90,7 +89,7 @@ EOF
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: B1r8-Final-CLEAN
+          tag_name: B1r8-Fixed
           files: openwrt/bin/targets/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
