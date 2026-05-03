@@ -127,7 +127,7 @@ jobs:
             done
           fi
 
-          # ✅ UPnP 自启（已修复缩进，完美过审）
+          # UPnP 自启（已修复缩进，完美过审）
           mkdir -p files/etc/uci-defaults
           cat > files/etc/uci-defaults/99-upnp << 'EOF'
           #!/bin/sh
