@@ -1,4 +1,4 @@
-name: Build OpenWrt B1r8
+name: Build OpenWrt ImmWrtV1
 
 on:
   workflow_dispatch:
@@ -39,8 +39,10 @@ jobs:
           echo "CONFIG_TARGET_x86_64_DEVICE_generic=y" >> .config
 
           # ✅ 2GB 分区 + EXT4 文件系统 (PVE 环境必备，方便扩容)
+          # 🚨 开启 GZIP 压缩以绕过 GitHub 2GB 上传限制，并彻底关闭无用的 SquashFS 以大幅提升编译速度
           echo "CONFIG_TARGET_ROOTFS_PARTSIZE=2048" >> .config
           echo "CONFIG_TARGET_ROOTFS_EXT4FS=y" >> .config
+          echo "CONFIG_TARGET_ROOTFS_SQUASHFS=n" >> .config
           echo "CONFIG_TARGET_IMAGES_GZIP=y" >> .config
 
           # LuCI
@@ -153,7 +155,7 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: B1r8-v25.12.0-rc2
+          tag_name: ImmWrt-${{ github.run_number }}
           files: openwrt/bin/targets/x86/64/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
