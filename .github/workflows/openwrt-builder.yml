@@ -38,10 +38,10 @@ jobs:
           echo "CONFIG_TARGET_x86_64=y" >> .config
           echo "CONFIG_TARGET_x86_64_DEVICE_generic=y" >> .config
 
-          # ✅ 1.5GB 分区 + EXT4 文件系统 (PVE 环境必备，方便扩容)
-          echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1536" >> .config
+          # ✅ 2GB 分区 + EXT4 文件系统 (PVE 环境必备，方便扩容)
+          echo "CONFIG_TARGET_ROOTFS_PARTSIZE=2048" >> .config
           echo "CONFIG_TARGET_ROOTFS_EXT4FS=y" >> .config
-          echo "CONFIG_TARGET_IMAGES_GZIP=n" >> .config
+          echo "CONFIG_TARGET_IMAGES_GZIP=y" >> .config
 
           # LuCI
           echo "CONFIG_PACKAGE_luci-light=y" >> .config
