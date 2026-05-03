@@ -13,14 +13,14 @@ jobs:
       - name: Init
         run: |
           sudo apt update
+          # ✅ 补齐了 jq 工具，用于后续物理删除挂载点 JSON 菜单
           sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib \
           gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget jq
 
       - name: Clone
         run: |
-          git clone https://github.com/immortalwrt/immortalwrt.git openwrt
-          cd openwrt
-          git checkout openwrt-25.12
+          # ✅ 精准拉取 v25.12.0-rc2 标签，编译出来不再是 SNAPSHOT 版本
+          git clone -b v25.12.0-rc2 --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
 
       - name: Feeds
         run: |
@@ -36,11 +36,12 @@ jobs:
           # 架构
           echo "CONFIG_TARGET_x86=y" >> .config
           echo "CONFIG_TARGET_x86_64=y" >> .config
-          echo "CONFIG_TARGET_x86_generic=y" >> .config
+          echo "CONFIG_TARGET_x86_64_DEVICE_generic=y" >> .config
 
-          # 2GB 分区 + EXT4 (配合使用)
+          # ✅ 2GB 分区 + EXT4 文件系统 (PVE 环境必备，方便扩容)
           echo "CONFIG_TARGET_ROOTFS_PARTSIZE=2048" >> .config
           echo "CONFIG_TARGET_ROOTFS_EXT4FS=y" >> .config
+          echo "CONFIG_TARGET_IMAGES_GZIP=n" >> .config
 
           # LuCI
           echo "CONFIG_PACKAGE_luci-light=y" >> .config
@@ -92,7 +93,7 @@ jobs:
           echo "CONFIG_PACKAGE_wget-ssl=y" >> .config
           echo "CONFIG_PACKAGE_qemu-ga=y" >> .config
 
-          # 网卡与驱动
+          # ✅ 网卡与 PVE VirtIO 驱动 (满血释放 N100 性能)
           echo "CONFIG_PACKAGE_kmod-igc=y" >> .config
           echo "CONFIG_PACKAGE_kmod-virtio-net=y" >> .config
           echo "CONFIG_PACKAGE_kmod-virtio-blk=y" >> .config
@@ -100,7 +101,7 @@ jobs:
           # 性能
           echo "CONFIG_PACKAGE_kmod-nft-offload=y" >> .config
 
-          # 彻底删除挂载点底层
+          # ❌ 彻底关闭挂载点相关包 (底层)
           echo "CONFIG_PACKAGE_luci-app-fstab=n" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-fstab-zh-cn=n" >> .config
           echo "CONFIG_PACKAGE_block-mount=n" >> .config
@@ -111,14 +112,16 @@ jobs:
         run: |
           cd openwrt
 
-          # Argon 默认
+          # Argon 默认主题
           sed -i "s/bootstrap/argon/g" feeds/luci/modules/luci-base/root/etc/config/luci
 
-          # flow offload
+          # Flow offload 硬件加速
           sed -i '/option flow_offloading/d' package/network/config/firewall/files/firewall.config
           echo "	option flow_offloading '1'" >> package/network/config/firewall/files/firewall.config
 
-          # 物理切除挂载点 JSON 菜单
+          # ==========================================
+          # 🚨 物理切除挂载点菜单 (利用 jq 删除静态索引)
+          # ==========================================
           MENU_DIR="feeds/luci/modules/luci-mod-system/root/usr/share/luci/menu.d"
           if [ -d "$MENU_DIR" ]; then
             for f in $MENU_DIR/*.json; do
@@ -127,7 +130,9 @@ jobs:
             done
           fi
 
-          # UPnP 自启（已修复缩进，完美过审）
+          # ==========================================
+          # ✅ UPnP 完整自启动配置 (修正缩进，保证不报红 X)
+          # ==========================================
           mkdir -p files/etc/uci-defaults
           cat > files/etc/uci-defaults/99-upnp << 'EOF'
           #!/bin/sh
@@ -142,12 +147,13 @@ jobs:
       - name: Build
         run: |
           cd openwrt
-          make -j$(nproc)
+          # 默认多核编译，出错时自动切换单核输出详尽日志
+          make -j$(nproc) || make -j1 V=s
 
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: B1r8
-          files: openwrt/bin/targets/**/*
+          tag_name: B1r8-v25.12.0-rc2
+          files: openwrt/bin/targets/x86/64/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
