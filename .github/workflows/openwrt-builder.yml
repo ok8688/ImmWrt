@@ -13,32 +13,32 @@ jobs:
       - name: Init
         run: |
           sudo apt update
-          # ✅ 补齐了 jq 工具，用于后续物理删除挂载点 JSON 菜单
+          # 补充 jq 工具，用于后续处理 JSON 配置文件以精简无用菜单
           sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib \
           gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget jq
 
       - name: Clone
         run: |
-          # ✅ 精准拉取 v25.12.0-rc2 标签，编译出来不再是 SNAPSHOT 版本
+          # 锁定 v25.12.0-rc2 稳定版分支进行源码拉取
           git clone -b v25.12.0-rc2 --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
 
       - name: Feeds
         run: |
           cd openwrt
-          # 1. 正常更新 ImmortalWrt 自带的所有软件源
+          # 更新并安装所有基础软件源
           ./scripts/feeds update -a
 
-          # 2. 🚨 核心手术：物理删除自带的旧版 Passwall 及相关核心依赖源码
+          # 移除系统自带的旧版 Passwall 及其核心依赖包，避免版本冲突
           rm -rf feeds/luci/applications/luci-app-passwall
           rm -rf feeds/packages/net/passwall
           rm -rf feeds/packages/net/xray-core
           rm -rf feeds/packages/net/sing-box
 
-          # 3. ✅ 注入灵魂：从 Openwrt-Passwall 官方组织账号拉取绝对最新版
+          # 从 Passwall 官方组织拉取最新版 UI 源码及底层依赖包
           git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/openwrt-passwall-packages
           git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/openwrt-passwall
 
-          # 4. 重新安装索引，此时系统会优先读取我们刚拉取的官方组织最新版
+          # 重新安装软件源索引，确保优先编译新拉取的官方组件
           ./scripts/feeds install -a
 
       - name: Config
@@ -46,52 +46,52 @@ jobs:
           cd openwrt
           rm -f .config
 
-          # 架构设置
+          # 系统架构设置
           echo "CONFIG_TARGET_x86=y" >> .config
           echo "CONFIG_TARGET_x86_64=y" >> .config
           echo "CONFIG_TARGET_x86_64_DEVICE_generic=y" >> .config
 
-          # ✅ 2GB 分区 + EXT4 文件系统 (PVE 环境必备，方便后期扩容)
-          # 🚨 开启 GZIP 压缩以绕过 GitHub 2GB 上传限制，并彻底关闭无用的 SquashFS 以提速
+          # 固件打包设置：配置 2GB EXT4 格式化分区以适配 PVE 环境扩容
+          # 关闭 SquashFS 并开启 GZIP 压缩，提升编译速度并规避 GitHub 上传体积限制
           echo "CONFIG_TARGET_ROOTFS_PARTSIZE=2048" >> .config
           echo "CONFIG_TARGET_ROOTFS_EXT4FS=y" >> .config
           echo "CONFIG_TARGET_ROOTFS_SQUASHFS=n" >> .config
           echo "CONFIG_TARGET_IMAGES_GZIP=y" >> .config
 
-          # LuCI 基础界面
+          # 基础系统及控制面板组件
           echo "CONFIG_PACKAGE_luci-light=y" >> .config
           echo "CONFIG_PACKAGE_luci-mod-admin-full=y" >> .config
 
-          # 简体中文语言包
+          # 系统语言设置为简体中文
           echo "CONFIG_LUCI_LANG_zh-cn=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
 
-          # Argon 主题及配置界面
+          # 安装 Argon 主题及专属配置插件
           echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-argon-config=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y" >> .config
 
-          # Passwall (由官方组织源提供的最新版)
+          # 科学上网：Passwall 及核心代理引擎配置
           echo "CONFIG_PACKAGE_luci-app-passwall=y" >> .config
           echo "CONFIG_PACKAGE_xray-core=y" >> .config
           echo "CONFIG_PACKAGE_sing-box=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y" >> .config
 
-          # DNS 与网络加速
+          # DNS 解析及硬件转发加速组件
           echo "CONFIG_PACKAGE_dnsmasq-full=y" >> .config
           echo "CONFIG_PACKAGE_smartdns=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-smartdns=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-smartdns-zh-cn=y" >> .config
           echo "CONFIG_PACKAGE_kmod-nft-offload=y" >> .config
 
-          # DDNS 与 UPnP
+          # 动态域名解析与 UPnP 自动端口映射
           echo "CONFIG_PACKAGE_luci-app-ddns=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-ddns-zh-cn=y" >> .config
           echo "CONFIG_PACKAGE_ddns-scripts-cloudflare=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-upnp=y" >> .config
           echo "CONFIG_PACKAGE_miniupnpd-nftables=y" >> .config
 
-          # 终端工具与常用补丁
+          # 实用系统工具及命令行套件
           echo "CONFIG_PACKAGE_luci-app-ttyd=y" >> .config
           echo "CONFIG_PACKAGE_ttyd=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y" >> .config
@@ -99,14 +99,14 @@ jobs:
           echo "CONFIG_PACKAGE_curl=y" >> .config
           echo "CONFIG_PACKAGE_wget-ssl=y" >> .config
 
-          # ✅ PVE 专用半虚拟化驱动 (N100 性能榨干关键)
+          # 虚拟机驱动：PVE 专属 VirtIO 半虚拟化网卡/硬盘驱动及 QEMU 代理
           echo "CONFIG_PACKAGE_qemu-ga=y" >> .config
           echo "CONFIG_PACKAGE_kmod-virtio-net=y" >> .config
           echo "CONFIG_PACKAGE_kmod-virtio-blk=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-advanced-reboot=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-advanced-reboot-zh-cn=y" >> .config
 
-          # ❌ 彻底关闭挂载点菜单相关包 (避免 UI 冗余)
+          # 移除不需要的挂载点系统包，精简 UI 面板
           echo "CONFIG_PACKAGE_luci-app-fstab=n" >> .config
           echo "CONFIG_PACKAGE_block-mount=n" >> .config
 
@@ -116,14 +116,14 @@ jobs:
         run: |
           cd openwrt
 
-          # 设置 Argon 为默认主题
+          # 修改系统默认主题为 Argon
           sed -i "s/bootstrap/argon/g" feeds/luci/modules/luci-base/root/etc/config/luci
 
-          # 开启 Flow offload 硬件转发加速
+          # 在防火墙配置中启用 Flow Offload 硬件转发加速
           sed -i '/option flow_offloading/d' package/network/config/firewall/files/firewall.config
           echo "	option flow_offloading '1'" >> package/network/config/firewall/files/firewall.config
 
-          # 🚨 物理切除挂载点菜单 (利用 jq 删除 JSON 索引)
+          # 遍历修改系统菜单配置，安全隐藏存储挂载点相关的 UI 项目
           MENU_DIR="feeds/luci/modules/luci-mod-system/root/usr/share/luci/menu.d"
           if [ -d "$MENU_DIR" ]; then
             for f in $MENU_DIR/*.json; do
@@ -132,7 +132,7 @@ jobs:
             done
           fi
 
-          # ✅ UPnP 完整自启动脚本配置
+          # 注入 UPnP 自启动配置脚本，确保刷机后开机自动生效
           mkdir -p files/etc/uci-defaults
           cat > files/etc/uci-defaults/99-upnp << 'EOF'
           #!/bin/sh
@@ -147,13 +147,13 @@ jobs:
       - name: Build
         run: |
           cd openwrt
-          # 默认使用所有 CPU 核心编译，出错则切换单核模式输出详细日志
+          # 采用多线程加速编译，若遇错则回退为单核模式以输出排错日志
           make -j$(nproc) || make -j1 V=s
 
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          # 👇 名字设为 ImmWrt，并加上自动递增的运行次数 (防止同名冲突报错)
+          # 动态生成发布版本号：前缀加自动递增序号，防止同名覆盖报错
           tag_name: ImmWrt-${{ github.run_number }}
           files: openwrt/bin/targets/x86/64/*
         env:
