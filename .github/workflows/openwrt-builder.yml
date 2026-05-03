@@ -38,7 +38,7 @@ jobs:
           echo "CONFIG_TARGET_x86_64=y" >> .config
           echo "CONFIG_TARGET_x86_generic=y" >> .config
 
-          # ✅ 2GB 分区 + EXT4 (配合使用)
+          # 2GB 分区 + EXT4 (配合使用)
           echo "CONFIG_TARGET_ROOTFS_PARTSIZE=2048" >> .config
           echo "CONFIG_TARGET_ROOTFS_EXT4FS=y" >> .config
 
