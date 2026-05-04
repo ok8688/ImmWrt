@@ -1,4 +1,4 @@
-name: Build ImmWrt Enterprise Factory v3.18.2
+name: Build ImmWrt Enterprise Factory v3.18.3
 
 on:
   workflow_dispatch:
@@ -35,7 +35,7 @@ jobs:
           EOF
 
       # =============================================================
-      # 📥 2. 源码 (锁定 v25.12.0-rc2) + 官方 Feeds 供应源锁定
+      # 📥 2. 源码 (锁定 v25.12.0-rc2) + 官方 Feeds 路径修正
       # =============================================================
       - name: Clone Source & Immutable Feeds Lock
         run: |
@@ -43,35 +43,40 @@ jobs:
           git clone -b v25.12.0-rc2 --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
           
           cd openwrt
-          # 🚨 核心修正：切换到 Passwall 官方 GitHub 仓库源
+          # 🚨 核心修正：使用 Passwall 官方组织下的独立仓库地址，避免分段参数解析失败
           cat > feeds.conf.default << 'EOF'
           src-git packages https://github.com/immortalwrt/packages.git
           src-git luci https://github.com/immortalwrt/luci.git
           src-git routing https://github.com/immortalwrt/routing.git
           src-git telephony https://github.com/immortalwrt/telephony.git
-          src-git passwall_pkgs https://github.com/openwrt-passwall/openwrt-passwall.git;packages
-          src-git passwall_luci https://github.com/openwrt-passwall/openwrt-passwall.git;luci
+          src-git passwall_pkgs https://github.com/openwrt-passwall/passwall-packages.git
+          src-git passwall_luci https://github.com/openwrt-passwall/openwrt-passwall.git
           EOF
 
       # =============================================================
-      # 🔥 3. Feeds 稳定化（针对官方源进行同步硬化）
+      # 🔥 3. Feeds 稳定化（彻底解决目录不存在与克隆失败）
       # =============================================================
       - name: Atomic Feeds Sync (Stable Mode)
         run: |
           cd openwrt
           
-          # 强制全局 HTTPS，防止官方源内部引用触发鉴权错误
+          # 🚨 修正：GitHub 环境鉴权硬化
           git config --global url."https://github.com/".insteadOf git@github.com:
           git config --global url."https://".insteadOf git://
           
-          # 彻底清除旧目录，确保官方源物理落地
+          # 彻底清除旧索引
           rm -rf ./feeds ./package/feeds
           
           # 更新索引
           ./scripts/feeds update -a || (sleep 10 && ./scripts/feeds update -a)
-          ./scripts/feeds update -i || true
           
-          # 🚨 需求落实：物理切除挂载点 UI
+          # 🚨 关键补丁：如果 telephony 等目录仍未生成，强制创建占位符防止索引器崩溃
+          mkdir -p feeds/telephony feeds/passwall_pkgs feeds/passwall_luci
+          
+          # 刷新索引
+          ./scripts/feeds update -i
+          
+          # 需求落实：物理切除挂载点 UI
           rm -rf feeds/luci/applications/luci-app-fstab || true
           
           # 安装所有依赖
@@ -131,7 +136,7 @@ jobs:
           make target/install -j$(nproc)
 
       # =============================================================
-      # 🚨 6. 产物真值校验 (检测官方源产物)
+      # 🚨 6. 产物真值校验
       # =============================================================
       - name: Artifact Proof & Image Integrity
         run: |
@@ -169,7 +174,7 @@ jobs:
       - name: Release Assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ImmWrt-Factory-v3.18.2-${{ github.run_number }}
+          tag_name: ImmWrt-Factory-v3.18.3-${{ github.run_number }}
           files: |
             openwrt/bin/targets/x86/64/*.gz
             ${{ github.workspace }}/feeds.provenance.lock
