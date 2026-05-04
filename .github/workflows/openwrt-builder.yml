@@ -1,4 +1,4 @@
-name: Build ImmWrt v2
+name: Build ImmWrt
 
 on:
   workflow_dispatch:
@@ -31,23 +31,22 @@ jobs:
         run: |
           cd openwrt
           
-          # 1. 更新所有基础源
           ./scripts/feeds update -a
-          
-          # 2. ✅ 采纳大佬建议：第一次全量安装，建立极其稳固的初始依赖树
           ./scripts/feeds install -a
           
-          # 3. 在依赖树完整的基础上进行“物理切除”
+          # 物理删除旧版组件
           rm -rf feeds/luci/applications/luci-app-passwall
           rm -rf feeds/packages/net/passwall
           rm -rf feeds/packages/net/xray-core
           rm -rf feeds/packages/net/sing-box
 
-          # 4. 强行注入 Passwall 官方组织最新版源码
+          # ✅ 完美移除挂载点：只切除前端 UI 菜单，保留底层 block-mount 确保 2GB 扩容正常开机
+          rm -rf feeds/luci/applications/luci-app-fstab
+
+          # 强行注入 Passwall 官方组织最新版源码
           git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/openwrt-passwall-packages
           git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/openwrt-passwall
 
-          # 5. ✅ 再次安装，刷新并完美覆盖最终的依赖关系
           ./scripts/feeds install -a
 
       - name: Config
@@ -83,7 +82,6 @@ jobs:
           echo "CONFIG_PACKAGE_luci-app-smartdns=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-smartdns-zh-cn=y" >> .config
 
-          # ✅ 多核网络优化组件 (N100 绝杀利器)
           echo "CONFIG_PACKAGE_kmod-nft-offload=y" >> .config
           echo "CONFIG_PACKAGE_firewall4=y" >> .config
           echo "CONFIG_PACKAGE_irqbalance=y" >> .config
@@ -102,16 +100,11 @@ jobs:
           echo "CONFIG_PACKAGE_curl=y" >> .config
           echo "CONFIG_PACKAGE_wget-ssl=y" >> .config
 
-          # ✅ PVE 满血驱动包 (已修复之前的拼写遗漏)
           echo "CONFIG_PACKAGE_qemu-ga=y" >> .config
           echo "CONFIG_PACKAGE_kmod-virtio-net=y" >> .config
           echo "CONFIG_PACKAGE_kmod-virtio-blk=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-advanced-reboot=y" >> .config
           echo "CONFIG_PACKAGE_luci-i18n-advanced-reboot-zh-cn=y" >> .config
-
-          # ❌ 抛弃 jq 野路子，直接从源头不编译挂载点菜单
-          echo "CONFIG_PACKAGE_luci-app-fstab=n" >> .config
-          echo "CONFIG_PACKAGE_block-mount=n" >> .config
 
           make defconfig
 
@@ -119,15 +112,12 @@ jobs:
         run: |
           cd openwrt
 
-          # Argon 默认主题
           sed -i "s/bootstrap/argon/g" feeds/luci/modules/luci-base/root/etc/config/luci
 
-          # ✅ 采用官方推荐的 uci-defaults 机制，极其优雅安全
           mkdir -p files/etc/uci-defaults
           cat > files/etc/uci-defaults/99-init-settings << 'EOF'
           #!/bin/sh
           
-          # 优雅开启 Flow Offloading 转发加速
           uci set firewall.@defaults[0].flow_offloading='1'
           uci commit firewall
           
@@ -135,7 +125,6 @@ jobs:
           EOF
           chmod +x files/etc/uci-defaults/99-init-settings
 
-      # ✅ 预下载机制防断流
       - name: Download
         run: |
           cd openwrt
@@ -146,7 +135,6 @@ jobs:
           cd openwrt
           make -j$(nproc) || make -j1 V=s
 
-      # ✅ 固件上传
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
