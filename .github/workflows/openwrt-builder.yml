@@ -1,4 +1,4 @@
-name: Build ImmWrt Enterprise Factory v3.19
+name: Build ImmWrt Enterprise Factory v3.20
 
 on:
   workflow_dispatch:
@@ -14,7 +14,6 @@ jobs:
       - name: Checkout Source
         uses: actions/checkout@v4
 
-      # ✅ 缓存优化：提速后续构建
       - name: Cache
         uses: actions/cache@v4
         with:
@@ -29,7 +28,7 @@ jobs:
 
       - name: Clone Source
         run: |
-          # 🚨 需求落实：锁定 v25.12.0-rc2 标签
+          # 锁定 v25.12.0-rc2 标签
           git clone -b v25.12.0-rc2 --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
 
       - name: Feeds & Passwall Official Core
@@ -37,14 +36,14 @@ jobs:
           cd openwrt
           ./scripts/feeds update -a
           
-          # 🚨 需求落实：物理切除挂载点 UI 与旧版冲突文件
+          # 物理切除旧版与 fstab 冗余
           rm -rf feeds/luci/applications/luci-app-fstab
           rm -rf feeds/luci/applications/luci-app-passwall
           rm -rf feeds/packages/net/passwall
           rm -rf feeds/packages/net/xray-core
           rm -rf feeds/packages/net/sing-box
 
-          # 🚨 核心修复：采用之前成功的“直接克隆法”，避开 Feeds 鉴权挑战
+          # 延续 v2 成功的克隆逻辑：直接注入 package 目录
           git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/openwrt-passwall-packages
           git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/openwrt-passwall
 
@@ -54,67 +53,63 @@ jobs:
         run: |
           cd openwrt
           
-          # 🚨 需求落实：开机加固 (Argon 预设 / UPnP 封印 / 600 权限)
+          # 自动化开机配置 (600 权限 / Argon / UPnP 封印)
           mkdir -p files/etc/uci-defaults
           cat > files/etc/uci-defaults/99-init-settings << 'EOF'
           #!/bin/sh
-          # Argon 预设
           uci set luci.main.mediaurlbase='/luci-static/argon'
           uci commit luci
-          # UPnP 默认禁用
           [ -f /etc/init.d/upnpd ] && /etc/init.d/upnpd disable
-          # 🚨 核心安全：SmartDNS 与 DHCP 配置文件权限锁定为 600
+          # 核心安全：配置文件权限锁定
           [ -f /etc/config/smartdns ] && chmod 600 /etc/config/smartdns
           [ -f /etc/config/dhcp ] && chmod 600 /etc/config/dhcp
+          
+          # 🚨 运行时内核参数补丁：确保 BBR 生效
+          echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
+          echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
           exit 0
           EOF
           chmod +x files/etc/uci-defaults/99-init-settings
 
-          # 🚨 核心配置：整合 N100 PVE 满血驱动与网络优化
           rm -f .config
           {
             echo "CONFIG_TARGET_x86=y"
             echo "CONFIG_TARGET_x86_64=y"
             echo "CONFIG_TARGET_x86_64_DEVICE_generic=y"
             
-            # 分区扩展：为 N100 提供充足空间
+            # 🚨 核心增强：BBR 拥塞控制与 FQ 队列
+            echo "CONFIG_TCP_CONG_BBR=y"
+            echo "CONFIG_NET_SCH_FQ=y"
+            echo "CONFIG_DEFAULT_TCP_CONG=\"bbr\""
+
+            # 分区与底座
             echo "CONFIG_TARGET_ROOTFS_PARTSIZE=2048"
             echo "CONFIG_TARGET_ROOTFS_EXT4FS=y"
-            echo "CONFIG_TARGET_ROOTFS_SQUASHFS=n"
             echo "CONFIG_TARGET_IMAGES_GZIP=y"
-
-            # 界面与中文支持
             echo "CONFIG_PACKAGE_luci-light=y"
             echo "CONFIG_LUCI_LANG_zh-cn=y"
-            echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y"
 
-            # 官方 Passwall 组织核心组件
+            # 官方 Passwall 组织核心
             echo "CONFIG_PACKAGE_luci-app-passwall=y"
             echo "CONFIG_PACKAGE_xray-core=y"
             echo "CONFIG_PACKAGE_sing-box=y"
-            echo "CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y"
 
-            # SmartDNS 增强
-            echo "CONFIG_PACKAGE_smartdns=y"
-            echo "CONFIG_PACKAGE_luci-app-smartdns=y"
-            echo "CONFIG_PACKAGE_luci-i18n-smartdns-zh-cn=y"
-
-            # N100 性能绝杀：多核加速与硬件分流
+            # 网络增强 (N100 绝杀)
+            echo "CONFIG_PACKAGE_irqbalance=y"
             echo "CONFIG_PACKAGE_kmod-nft-offload=y"
             echo "CONFIG_PACKAGE_firewall4=y"
-            echo "CONFIG_PACKAGE_irqbalance=y"
-            echo "CONFIG_PACKAGE_ethtool=y"
-            
-            # PVE 满血支持与 VirtIO 驱动
+
+            # PVE 满血驱动
             echo "CONFIG_PACKAGE_qemu-ga=y"
             echo "CONFIG_PACKAGE_kmod-virtio-net=y"
             echo "CONFIG_PACKAGE_kmod-virtio-blk=y"
             
-            # 常用工具与主题
+            # 主题与常用工具
             echo "CONFIG_PACKAGE_luci-theme-argon=y"
+            echo "CONFIG_PACKAGE_smartdns=y"
+            echo "CONFIG_PACKAGE_luci-app-smartdns=y"
             echo "CONFIG_PACKAGE_htop=y"
             echo "CONFIG_PACKAGE_curl=y"
-            echo "CONFIG_PACKAGE_wget-ssl=y"
           } >> .config
 
           make defconfig
@@ -123,10 +118,9 @@ jobs:
         run: |
           cd openwrt
           export FORCE_UNSAFE_CONFIGURE=1
-          # 按照成功经验执行分步安装
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
-          # 针对 Go 组件自动降级单线程，确保构建不中断
+          # 针对 Go 组件自动降级单线程
           make package/compile -j$(nproc) V=s || make package/compile -j1 V=s
           make package/install -j$(nproc)
           make target/install -j$(nproc)
@@ -134,5 +128,5 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ImmWrt-v3.19-Firmware
+          name: ImmWrt-v3.20-BBR-Final
           path: openwrt/bin/targets/x86/64/*.gz
