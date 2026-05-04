@@ -25,7 +25,7 @@ jobs:
           sudo apt update
           sudo apt install -y build-essential jq coreutils moreutils time
           
-          # 🚨 核心能力图谱定义：用于后续产物一致性校验
+          # 🚨 核心能力图谱定义：用于产物一致性校验
           cat > $GITHUB_WORKSPACE/capability_graph.json << 'EOF'
           {
             "NETWORK_VIRTUALIZATION": { "mandatory_pkgs": ["kmod-virtio-net", "block-mount"] },
@@ -36,12 +36,12 @@ jobs:
           EOF
 
       # =============================================================
-      # 📥 2. 源码 + Feeds 供应源锁定
+      # 📥 2. 源码 (锁定 v25.12.0-rc2) + Feeds 供应源锁定
       # =============================================================
       - name: Clone Source & Immutable Feeds Lock
         run: |
-          # 锁定核心源码库
-          git clone --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
+          # 🚨 核心修正：锁定 v25.12.0-rc2 标签
+          git clone -b v25.12.0-rc2 --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
           
           cd openwrt
           # 强制注入确定的 Feeds 配置，解决依赖漂移风险
@@ -61,7 +61,7 @@ jobs:
         run: |
           cd openwrt
           
-          # 清理残留索引
+          # 清理残留索引以防止目录不一致错误
           rm -rf ./feeds ./package/feeds
           
           # 执行更新（含重试机制）
@@ -71,7 +71,7 @@ jobs:
           # 🚨 需求落实：物理切除挂载点 UI
           rm -rf feeds/luci/applications/luci-app-fstab || true
           
-          # 执行安装（双重重试确保核心依赖落地）
+          # 执行安装
           ./scripts/feeds install -a || ./scripts/feeds install -a || {
             echo "❌ feeds install failed"
             exit 1
@@ -118,7 +118,7 @@ jobs:
           make defconfig
 
       # =============================================================
-      # 🏗️ 5. 编译执行（含 Go 组件保底策略）
+      # 🏗️ 5. 编译执行 (含 Go 组件保底策略)
       # =============================================================
       - name: Build World
         run: |
@@ -128,7 +128,7 @@ jobs:
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
           
-          # 针对内存压力大的 Go 组件（Xray/Sing-box）使用单线程保底
+          # 针对内存压力大的 Go 组件使用单线程保底
           make package/compile -j$(nproc) V=s || make package/compile -j1 V=s
           make package/install -j$(nproc)
           make target/install -j$(nproc)
@@ -138,32 +138,31 @@ jobs:
       # =============================================================
       - name: Artifact Proof & Image Integrity
         run: |
-          # 从 Packages 索引中提取安装令牌
+          # 🚨 v3.15 核心逻辑：基于“产物即真值”进行校验
           find openwrt/bin/packages/ -name "Packages" -exec grep "^Package: " {} + \
             | sed 's/^Package: //' | sort -u > $GITHUB_WORKSPACE/artifact.tokens.txt
           
-          # 补充物理 IPK/APK 扫描，解决索引未同步风险
+          # 补充物理 IPK 扫描以增强确定性
           find openwrt/bin/packages/ -name "*.ipk" -o -name "*.apk" \
             | xargs -n1 basename \
             | sed -E 's/_[0-9].*//' >> $GITHUB_WORKSPACE/artifact.tokens.txt
           
           sort -u $GITHUB_WORKSPACE/artifact.tokens.txt -o $GITHUB_WORKSPACE/artifact.tokens.txt
           
-          # 从图谱中提取强制性包要求
+          # 契约比对
           jq -r '.[] | .mandatory_pkgs[]' $GITHUB_WORKSPACE/capability_graph.json \
             | sort -u > $GITHUB_WORKSPACE/required.tokens.txt
           
-          # 计算差集：Required - Artifact
           comm -23 $GITHUB_WORKSPACE/required.tokens.txt $GITHUB_WORKSPACE/artifact.tokens.txt \
             > $GITHUB_WORKSPACE/missing.tokens.txt
           
           if [ -s $GITHUB_WORKSPACE/missing.tokens.txt ]; then
-            echo "❌ CRITICAL: Capability Breach! Missing mandatory packages."
+            echo "❌ CRITICAL: Capability Breach! Missing mandatory packages:"
             cat $GITHUB_WORKSPACE/missing.tokens.txt
             exit 1
           fi
           
-          # 🚨 修正：健壮的镜像真值校验
+          # 健壮的镜像真值校验
           FIRMWARE_COUNT=$(find openwrt/bin/targets -type f \( -name "*.img.gz" -o -name "*.gz" \) | wc -l)
           if [ "$FIRMWARE_COUNT" -eq 0 ]; then
             echo "❌ CRITICAL: NO FIRMWARE IMAGE FOUND"
