@@ -14,6 +14,7 @@ jobs:
       - name: Checkout Source
         uses: actions/checkout@v4
 
+      # ✅ 缓存优化：提速后续构建
       - name: Cache
         uses: actions/cache@v4
         with:
@@ -43,7 +44,7 @@ jobs:
           rm -rf feeds/packages/net/xray-core
           rm -rf feeds/packages/net/sing-box
 
-          # 🚨 核心同步：采用你提供的成功路径，直接克隆到 package 目录避免鉴权死锁
+          # 🚨 核心修复：采用之前成功的“直接克隆法”，避开 Feeds 鉴权挑战
           git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/openwrt-passwall-packages
           git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/openwrt-passwall
 
@@ -57,8 +58,10 @@ jobs:
           mkdir -p files/etc/uci-defaults
           cat > files/etc/uci-defaults/99-init-settings << 'EOF'
           #!/bin/sh
+          # Argon 预设
           uci set luci.main.mediaurlbase='/luci-static/argon'
           uci commit luci
+          # UPnP 默认禁用
           [ -f /etc/init.d/upnpd ] && /etc/init.d/upnpd disable
           # 🚨 核心安全：SmartDNS 与 DHCP 配置文件权限锁定为 600
           [ -f /etc/config/smartdns ] && chmod 600 /etc/config/smartdns
@@ -74,18 +77,18 @@ jobs:
             echo "CONFIG_TARGET_x86_64=y"
             echo "CONFIG_TARGET_x86_64_DEVICE_generic=y"
             
-            # 分区与文件系统优化
+            # 分区扩展：为 N100 提供充足空间
             echo "CONFIG_TARGET_ROOTFS_PARTSIZE=2048"
             echo "CONFIG_TARGET_ROOTFS_EXT4FS=y"
             echo "CONFIG_TARGET_ROOTFS_SQUASHFS=n"
             echo "CONFIG_TARGET_IMAGES_GZIP=y"
 
-            # 基础组件与中文支持
+            # 界面与中文支持
             echo "CONFIG_PACKAGE_luci-light=y"
             echo "CONFIG_LUCI_LANG_zh-cn=y"
             echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y"
 
-            # 官方 Passwall 组织核心
+            # 官方 Passwall 组织核心组件
             echo "CONFIG_PACKAGE_luci-app-passwall=y"
             echo "CONFIG_PACKAGE_xray-core=y"
             echo "CONFIG_PACKAGE_sing-box=y"
@@ -96,19 +99,22 @@ jobs:
             echo "CONFIG_PACKAGE_luci-app-smartdns=y"
             echo "CONFIG_PACKAGE_luci-i18n-smartdns-zh-cn=y"
 
-            # N100/PVE 绝杀利器：多核加速与虚拟化驱动
+            # N100 性能绝杀：多核加速与硬件分流
             echo "CONFIG_PACKAGE_kmod-nft-offload=y"
             echo "CONFIG_PACKAGE_firewall4=y"
             echo "CONFIG_PACKAGE_irqbalance=y"
             echo "CONFIG_PACKAGE_ethtool=y"
+            
+            # PVE 满血支持与 VirtIO 驱动
             echo "CONFIG_PACKAGE_qemu-ga=y"
             echo "CONFIG_PACKAGE_kmod-virtio-net=y"
             echo "CONFIG_PACKAGE_kmod-virtio-blk=y"
             
-            # 主题与常用工具
+            # 常用工具与主题
             echo "CONFIG_PACKAGE_luci-theme-argon=y"
             echo "CONFIG_PACKAGE_htop=y"
             echo "CONFIG_PACKAGE_curl=y"
+            echo "CONFIG_PACKAGE_wget-ssl=y"
           } >> .config
 
           make defconfig
@@ -117,9 +123,10 @@ jobs:
         run: |
           cd openwrt
           export FORCE_UNSAFE_CONFIGURE=1
+          # 按照成功经验执行分步安装
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
-          # 针对 Go 组件自动降级单线程
+          # 针对 Go 组件自动降级单线程，确保构建不中断
           make package/compile -j$(nproc) V=s || make package/compile -j1 V=s
           make package/install -j$(nproc)
           make target/install -j$(nproc)
