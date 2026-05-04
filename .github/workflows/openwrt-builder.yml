@@ -1,4 +1,4 @@
-name: Build ImmWrt Enterprise Factory v3.18
+name: Build ImmWrt Enterprise Factory v3.18.2
 
 on:
   workflow_dispatch:
@@ -18,14 +18,13 @@ jobs:
         uses: actions/checkout@v4
 
       # =============================================================
-      # 🧱 1. 环境初始化与能力图谱声明 (L0: Immutable Layer)
+      # 🧱 1. 环境初始化 (L0: Immutable Layer)
       # =============================================================
       - name: Init & Deterministic Env
         run: |
           sudo apt update
           sudo apt install -y build-essential jq coreutils moreutils time
           
-          # 🚨 核心能力图谱定义：用于产物一致性校验
           cat > $GITHUB_WORKSPACE/capability_graph.json << 'EOF'
           {
             "NETWORK_VIRTUALIZATION": { "mandatory_pkgs": ["kmod-virtio-net", "block-mount"] },
@@ -36,52 +35,52 @@ jobs:
           EOF
 
       # =============================================================
-      # 📥 2. 源码 (锁定 v25.12.0-rc2) + Feeds 供应源锁定
+      # 📥 2. 源码 (锁定 v25.12.0-rc2) + 官方 Feeds 供应源锁定
       # =============================================================
       - name: Clone Source & Immutable Feeds Lock
         run: |
-          # 🚨 核心修正：锁定 v25.12.0-rc2 标签
+          # 锁定 v25.12.0-rc2 标签
           git clone -b v25.12.0-rc2 --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
           
           cd openwrt
-          # 强制注入确定的 Feeds 配置，解决依赖漂移风险
+          # 🚨 核心修正：切换到 Passwall 官方 GitHub 仓库源
           cat > feeds.conf.default << 'EOF'
           src-git packages https://github.com/immortalwrt/packages.git
           src-git luci https://github.com/immortalwrt/luci.git
           src-git routing https://github.com/immortalwrt/routing.git
           src-git telephony https://github.com/immortalwrt/telephony.git
-          src-git passwall_pkgs https://github.com/itdog-info/openwrt-passwall-packages.git
-          src-git passwall_luci https://github.com/itdog-info/openwrt-passwall.git
+          src-git passwall_pkgs https://github.com/openwrt-passwall/openwrt-passwall.git;packages
+          src-git passwall_luci https://github.com/openwrt-passwall/openwrt-passwall.git;luci
           EOF
 
       # =============================================================
-      # 🔥 3. Feeds 稳定化同步与物理裁剪
+      # 🔥 3. Feeds 稳定化（针对官方源进行同步硬化）
       # =============================================================
       - name: Atomic Feeds Sync (Stable Mode)
         run: |
           cd openwrt
           
-          # 清理残留索引以防止目录不一致错误
+          # 强制全局 HTTPS，防止官方源内部引用触发鉴权错误
+          git config --global url."https://github.com/".insteadOf git@github.com:
+          git config --global url."https://".insteadOf git://
+          
+          # 彻底清除旧目录，确保官方源物理落地
           rm -rf ./feeds ./package/feeds
           
-          # 执行更新（含重试机制）
-          ./scripts/feeds update -a || ./scripts/feeds update -a
+          # 更新索引
+          ./scripts/feeds update -a || (sleep 10 && ./scripts/feeds update -a)
           ./scripts/feeds update -i || true
           
           # 🚨 需求落实：物理切除挂载点 UI
           rm -rf feeds/luci/applications/luci-app-fstab || true
           
-          # 执行安装
-          ./scripts/feeds install -a || ./scripts/feeds install -a || {
-            echo "❌ feeds install failed"
-            exit 1
-          }
+          # 安装所有依赖
+          ./scripts/feeds install -a || ./scripts/feeds install -a
           
-          # 存证当前供应指纹
           ./scripts/feeds list -s > $GITHUB_WORKSPACE/feeds.provenance.lock
 
       # =============================================================
-      # ⚙️ 4. 硬化配置与开机安全加固
+      # ⚙️ 4. 硬化配置与开机安全加固 (需求覆盖)
       # =============================================================
       - name: Hardened Config & Security
         run: |
@@ -90,19 +89,18 @@ jobs:
           
           cat > files/etc/uci-defaults/99-init-settings << 'EOF'
           #!/bin/sh
-          # 🚨 需求落实：Argon 预设
+          # Argon 预设
           uci set luci.main.mediaurlbase='/luci-static/argon'
           uci commit luci
-          # 🚨 需求落实：UPnP 封印
+          # UPnP 封印
           [ -f /etc/init.d/upnpd ] && /etc/init.d/upnpd disable
-          # 🚨 需求落实：核心配置文件权限硬化 (600)
+          # 🚨 需求落实：SmartDNS 与 DHCP 权限硬化 (600)
           [ -f /etc/config/smartdns ] && chmod 600 /etc/config/smartdns
           [ -f /etc/config/dhcp ] && chmod 600 /etc/config/dhcp
           exit 0
           EOF
           chmod +x files/etc/uci-defaults/99-init-settings
           
-          # 注入核心编译配置
           {
             echo "CONFIG_TARGET_x86=y"
             echo "CONFIG_TARGET_x86_64=y"
@@ -113,43 +111,39 @@ jobs:
             echo "CONFIG_PACKAGE_luci-app-smartdns=y"
             echo "CONFIG_PACKAGE_luci-theme-argon=y"
             echo "CONFIG_PACKAGE_block-mount=y"
+            echo "CONFIG_PACKAGE_kmod-virtio-net=y"
           } >> .config
           
           make defconfig
 
       # =============================================================
-      # 🏗️ 5. 编译执行 (含 Go 组件保底策略)
+      # 🏗️ 5. 编译执行
       # =============================================================
       - name: Build World
         run: |
           cd openwrt
           export FORCE_UNSAFE_CONFIGURE=1
-          
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
-          
-          # 针对内存压力大的 Go 组件使用单线程保底
+          # Go 组件保底策略
           make package/compile -j$(nproc) V=s || make package/compile -j1 V=s
           make package/install -j$(nproc)
           make target/install -j$(nproc)
 
       # =============================================================
-      # 🚨 6. 产物真值校验与镜像完整性检测
+      # 🚨 6. 产物真值校验 (检测官方源产物)
       # =============================================================
       - name: Artifact Proof & Image Integrity
         run: |
-          # 🚨 v3.15 核心逻辑：基于“产物即真值”进行校验
           find openwrt/bin/packages/ -name "Packages" -exec grep "^Package: " {} + \
             | sed 's/^Package: //' | sort -u > $GITHUB_WORKSPACE/artifact.tokens.txt
           
-          # 补充物理 IPK 扫描以增强确定性
           find openwrt/bin/packages/ -name "*.ipk" -o -name "*.apk" \
             | xargs -n1 basename \
             | sed -E 's/_[0-9].*//' >> $GITHUB_WORKSPACE/artifact.tokens.txt
           
           sort -u $GITHUB_WORKSPACE/artifact.tokens.txt -o $GITHUB_WORKSPACE/artifact.tokens.txt
           
-          # 契约比对
           jq -r '.[] | .mandatory_pkgs[]' $GITHUB_WORKSPACE/capability_graph.json \
             | sort -u > $GITHUB_WORKSPACE/required.tokens.txt
           
@@ -157,27 +151,25 @@ jobs:
             > $GITHUB_WORKSPACE/missing.tokens.txt
           
           if [ -s $GITHUB_WORKSPACE/missing.tokens.txt ]; then
-            echo "❌ CRITICAL: Capability Breach! Missing mandatory packages:"
+            echo "❌ Capability Breach! Missing mandatory packages:"
             cat $GITHUB_WORKSPACE/missing.tokens.txt
             exit 1
           fi
           
-          # 健壮的镜像真值校验
           FIRMWARE_COUNT=$(find openwrt/bin/targets -type f \( -name "*.img.gz" -o -name "*.gz" \) | wc -l)
           if [ "$FIRMWARE_COUNT" -eq 0 ]; then
-            echo "❌ CRITICAL: NO FIRMWARE IMAGE FOUND"
+            echo "❌ NO FIRMWARE IMAGE FOUND"
             exit 1
           fi
-          
-          echo "✅ Final Verdict: Artifact proof verified and Image generated."
+          echo "✅ Final Verdict: Artifact proof verified."
 
       # =============================================================
-      # 📦 7. 发布与资产存证
+      # 📦 7. 发布资产
       # =============================================================
       - name: Release Assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ImmWrt-Factory-v3.18-${{ github.run_number }}
+          tag_name: ImmWrt-Factory-v3.18.2-${{ github.run_number }}
           files: |
             openwrt/bin/targets/x86/64/*.gz
             ${{ github.workspace }}/feeds.provenance.lock
