@@ -1,27 +1,63 @@
-name: Build ImmWrt Enterprise Factory v3.2
+name: Build ImmWrt Enterprise Factory v3.9.1
 
 on:
   workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
 
 jobs:
   build:
     runs-on: ubuntu-22.04
     env:
       FEEDS_PARALLEL: 1
-    
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      # 🚨 护栏 3 (前置)：获取并强制锁定 Baseline 的 Commit 真相
+      - name: Checkout Baseline State & Pin Commit
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          ref: baseline
+          path: baseline-repo
+          
+      - name: Lock Baseline Commit
+        run: |
+          if [ -d "baseline-repo/.git" ]; then
+            git -C baseline-repo rev-parse HEAD > $GITHUB_WORKSPACE/baseline.commit.lock
+            echo "🔒 Baseline locked at commit: $(cat $GITHUB_WORKSPACE/baseline.commit.lock)"
+          else
+            echo "⚠️ No baseline repository found. Skipping lock."
+          fi
 
       # =============================================================
-      # 🧱 1. 环境指纹与元数据初始化
+      # 🧱 1. 环境初始化 & 契约声明 (L0: Build Contract)
       # =============================================================
-      - name: Init & SLSA Metadata
+      - name: Init & Define Build Contract
         run: |
+          # 🚨 护栏 1 (前置)：净化 Runner 终端环境，消灭交互与进度条噪音
+          export DEBIAN_FRONTEND=noninteractive
+          export TERM=dumb
+          
           sudo apt update
           sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib \
-          gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget jq time
+          gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget jq time coreutils
           
-          # 锁定编译器版本，防止 Runner 环境更新导致的 ABI 漂移
+          # 契约定义：显式声明系统必须生成的包清单
+          cat > $GITHUB_WORKSPACE/build.contract.txt << 'EOF'
+          luci-app-passwall
+          xray-core
+          sing-box
+          smartdns
+          luci-app-smartdns
+          luci-theme-argon
+          block-mount
+          EOF
+          
           {
             echo "gcc=$(gcc -dumpversion)"
             echo "clang=$(clang --version | head -n1)"
@@ -34,50 +70,58 @@ jobs:
           git clone -b v25.12.0-rc2 --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
 
       # =============================================================
-      # 🔥 2. Feeds 来源审计与 JSON 注入 (SLSA 核心)
+      # 🔥 2. Feeds 溯源与重构
       # =============================================================
       - name: Feeds Supply Chain Audit
         run: |
           cd openwrt
-          
           touch $GITHUB_WORKSPACE/feeds.provenance.log
           
           git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/openwrt-passwall-packages
           git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/openwrt-passwall
           
           ./scripts/feeds update -a
-          
-          # 物理隔离与冲突切除
-          rm -rf feeds/luci/applications/luci-app-passwall feeds/packages/net/passwall feeds/packages/net/xray-core feeds/packages/net/sing-box feeds/luci/applications/luci-app-fstab feeds/packages/net/shadowsocksr-libev
+          rm -rf feeds/luci/applications/luci-app-fstab
+          rm -rf feeds/luci/applications/luci-app-passwall
+          rm -rf feeds/packages/net/passwall
+          rm -rf feeds/packages/net/xray-core
+          rm -rf feeds/packages/net/sing-box
+          rm -rf feeds/packages/net/shadowsocksr-libev
           find package -type d -iname "*shadowsocksr*" -exec rm -rf {} +
           
-          # 稳健的 JSON 处理，防止 feeds list 过长导致参数截断
-          jq empty $GITHUB_WORKSPACE/provenance.json
-          ./scripts/feeds list -s > feeds.summary.txt
-          jq -n \
-            --slurpfile base $GITHUB_WORKSPACE/provenance.json \
-            --rawfile feeds feeds.summary.txt \
-            '$base[0] + {feeds_summary: $feeds}' \
-            > provenance.json.tmp
-          mv provenance.json.tmp $GITHUB_WORKSPACE/provenance.json
-          
-          # 强制排序，确保审计日志的顺序可复现
-          for d in $(ls -d feeds/* | sort); do
-            if [ -d "$d/.git" ]; then
-              echo "{\"feed\": \"$d\", \"url\": \"$(git -C $d remote get-url origin)\", \"commit\": \"$(git -C $d rev-parse HEAD)\"}" >> $GITHUB_WORKSPACE/feeds.provenance.log
-            fi
-          done
-          
+          rm -f feeds/luci.index feeds/packages.index
+          ./scripts/feeds update -a
+          ./scripts/feeds update -i
           ./scripts/feeds install -a
+          
           git rev-parse HEAD > $GITHUB_WORKSPACE/build.commit
 
       # =============================================================
-      # ⚙️ 3. 配置引擎与 ABI 保护
+      # ⚙️ 3. 配置引擎 & 开机权限加固 & 护栏 3 (验证)
       # =============================================================
-      - name: Dependency DAG Engine
+      - name: Dependency DAG Engine & Dual-Layer Graph Lock
         run: |
           cd openwrt
           rm -f .config
+          
+          mkdir -p files/etc/uci-defaults
+          cat > files/etc/uci-defaults/99-init-settings << 'EOF'
+          #!/bin/sh
+          uci set luci.main.mediaurlbase='/luci-static/argon'
+          uci set luci.main.mediaurlbase_theme='argon'
+          uci commit luci
+          
+          if [ -f /etc/init.d/upnpd ]; then
+            /etc/init.d/upnpd disable
+            uci set upnpd.config.enabled='0'
+            uci commit upnpd
+          fi
+          
+          [ -f /etc/config/smartdns ] && chmod 600 /etc/config/smartdns
+          [ -f /etc/config/dhcp ] && chmod 600 /etc/config/dhcp
+          exit 0
+          EOF
+          chmod +x files/etc/uci-defaults/99-init-settings
           
           {
             echo "CONFIG_TARGET_x86=y"
@@ -89,17 +133,34 @@ jobs:
             echo "CONFIG_PACKAGE_luci-app-passwall=y"
             echo "CONFIG_PACKAGE_xray-core=y"
             echo "CONFIG_PACKAGE_sing-box=y"
-            echo "CONFIG_PACKAGE_shadowsocksr-libev=n"
             echo "CONFIG_PACKAGE_smartdns=y"
+            echo "CONFIG_PACKAGE_luci-app-smartdns=y"
             echo "CONFIG_PACKAGE_kmod-virtio-net=y"
             echo "CONFIG_PACKAGE_qemu-ga=y"
+            echo "CONFIG_PACKAGE_luci-theme-argon=y"
+            echo "CONFIG_LUCI_LANG_zh_Hans=y"
+            echo "# CONFIG_PACKAGE_luci-app-fstab is not set"
+            echo "CONFIG_PACKAGE_block-mount=y"
           } >> .config
           
           make defconfig
-          # 语义化依赖锁
           ./scripts/diffconfig.sh > $GITHUB_WORKSPACE/diffconfig.lock
-          date +%s > $GITHUB_WORKSPACE/cache.version
+          ./scripts/dump-target-info.pl package | sort > $GITHUB_WORKSPACE/pkg.graph.current
+          sha256sum $GITHUB_WORKSPACE/pkg.graph.current > $GITHUB_WORKSPACE/pkg.graph.lock
+          
+          # 🚨 护栏 3 (执行)：强制验证 Baseline 锁并进行图谱漂移分析
+          if [ -f "$GITHUB_WORKSPACE/baseline.commit.lock" ]; then
+            echo "Verifying against baseline commit: $(cat $GITHUB_WORKSPACE/baseline.commit.lock)"
+            if ! cmp -s "$GITHUB_WORKSPACE/pkg.graph.lock" "$GITHUB_WORKSPACE/baseline-repo/pkg.graph.lock"; then
+              echo "❌ CRITICAL: Dependency drift against locked baseline!"
+              exit 1
+            fi
+            echo "✅ Baseline integrity verified."
+          fi
 
+      # =============================================================
+      # 🧠 4. 缓存矩阵
+      # =============================================================
       - name: Cache Matrix
         uses: actions/cache@v4
         with:
@@ -107,58 +168,80 @@ jobs:
             openwrt/dl
             openwrt/staging_dir/host*
             openwrt/staging_dir/toolchain-*
-          key: factory-v3.2-${{ runner.os }}-${{ hashFiles('**/build.commit', '**/diffconfig.lock', '**/toolchain.lock', '**/cache.version') }}
-          restore-keys: |
-            factory-v3.2-${{ runner.os }}-${{ hashFiles('**/build.commit', '**/diffconfig.lock') }}
-            factory-v3.2-${{ runner.os }}-
+          key: factory-v3.9.1-buster_${{ vars.CACHE_BUSTER || '1' }}-${{ runner.os }}-${{ hashFiles('**/build.commit', '**/diffconfig.lock', '**/toolchain.lock', '**/pkg.graph.lock') }}
 
       # =============================================================
-      # 🏗️ 4. 分层构建与产物校验 (Factory World)
+      # 🏗️ 5. 编译执行 & 护栏 1: 提取纯净事件流 (L1 & L2)
       # =============================================================
-      - name: Build World (Sequential)
+      - name: Build World & Pure Event Collection
         run: |
           cd openwrt
-          echo "MAKE_JOBS=$(nproc)" >> $GITHUB_ENV
+          make tools/install -j$(nproc)
+          make toolchain/install -j$(nproc)
+          make target/compile -j$(nproc)
           
-          # 第一阶段：基础工具
-          make tools/install -j$(nproc) || make tools/install -j1 V=s
-          make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
+          # 🚨 护栏 1 (执行)：清除终端伪影，使用 stdbuf 行缓冲截获绝对纯净的构建流
+          export FORCE_UNSAFE_CONFIGURE=1
+          export TERM=dumb
+          export DEBIAN_FRONTEND=noninteractive
           
-          # 第二阶段：内核与符号审计
-          make target/compile -j$(nproc) || make target/compile -j1 V=s
+          make package/compile -j$(nproc) V=s 2>&1 | stdbuf -oL grep -E "Installing|Package" | tee $GITHUB_WORKSPACE/build.log
           
-          if [ -f build_dir/target-*/linux-*/vmlinux ]; then
-            readelf -Ws build_dir/target-*/linux-*/vmlinux | sha256sum > $GITHUB_WORKSPACE/kernel.symbol.lock
-          else
-            echo "NO_VMLINUX" | sha256sum > $GITHUB_WORKSPACE/kernel.symbol.lock
-          fi
-          
-          # 第三阶段：包编译与封装
-          make package/compile -j$(nproc) || make package/compile -j1 V=s
           make package/install -j$(nproc)
           make target/install -j$(nproc)
           make checksum
+
+      # =============================================================
+      # 🚨 6. 契约履行验证 & 护栏 2: 集合差分安全模型
+      # =============================================================
+      - name: Validate Build Contract Performance
+        run: |
+          # 剥离出干净的已安装包名
+          grep -oE "(Installing|Package) [a-zA-Z0-9_-]+" $GITHUB_WORKSPACE/build.log \
+            | awk '{print $2}' \
+            | sort -u > $GITHUB_WORKSPACE/installed.packages.tmp
+            
+          mv $GITHUB_WORKSPACE/installed.packages.tmp $GITHUB_WORKSPACE/installed.packages.txt
+          sort $GITHUB_WORKSPACE/build.contract.txt -o $GITHUB_WORKSPACE/build.contract.txt
           
-          # 产物完整性指纹
-          find . -type f \( -name "*.o" -o -name "*.ko" \) | sort | xargs sha256sum > $GITHUB_WORKSPACE/build.artifact.hash
+          # 🚨 护栏 2 (执行)：严格集合差分。只有当差分文件真的不存在任何字符时，才视为履行契约。
+          comm -23 $GITHUB_WORKSPACE/build.contract.txt $GITHUB_WORKSPACE/installed.packages.txt > $GITHUB_WORKSPACE/breached.contracts
+          
+          if grep -q '[^[:space:]]' $GITHUB_WORKSPACE/breached.contracts; then
+            echo "❌ CRITICAL: Build Contract Breached! The following packages are missing:"
+            cat $GITHUB_WORKSPACE/breached.contracts
+            exit 1
+          fi
+          
+          echo "✅ Build Contract Fulfilled: All declared packages successfully recorded in deterministic stream."
+          
+          cd openwrt
+          find . -type f -name "*.ko" -o -name "*.o" | sort | xargs sha256sum > $GITHUB_WORKSPACE/build.artifact.hash
           sha256sum bin/targets/*/*/*.gz > $GITHUB_WORKSPACE/firmware.sha256
 
       # =============================================================
-      # 📦 5. 自动化发布 (SLSA 分级分发)
+      # 🔐 7. 数字签名 (Cosign) & 发布
       # =============================================================
+      - name: Install Cosign & Sign Release
+        uses: sigstore/cosign-installer@v3.5.0
+
+      - name: Sign Release Artifacts
+        run: |
+          cosign sign-blob --yes --bundle $GITHUB_WORKSPACE/firmware.sha256.bundle $GITHUB_WORKSPACE/firmware.sha256
+
       - name: Release Factory Assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ImmWrt-Factory-v3.2-${{ github.run_number }}
+          tag_name: ImmWrt-Factory-v3.9.1-${{ github.run_number }}
           files: |
             openwrt/bin/targets/x86/64/*.gz
-            ./*.sha256
-            ./*.hash
-            ./provenance.json
-            ./feeds.provenance.log
-            ./diffconfig.lock
-            ./kernel.symbol.lock
-            ./build.commit
-            ./toolchain.lock
+            ${{ github.workspace }}/firmware.sha256
+            ${{ github.workspace }}/firmware.sha256.bundle
+            ${{ github.workspace }}/build.artifact.hash
+            ${{ github.workspace }}/provenance.json
+            ${{ github.workspace }}/diffconfig.lock
+            ${{ github.workspace }}/pkg.graph.lock
+            ${{ github.workspace }}/build.log
+            ${{ github.workspace }}/baseline.commit.lock
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
