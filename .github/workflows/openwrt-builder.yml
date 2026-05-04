@@ -27,11 +27,12 @@ jobs:
           
       - name: Lock Baseline Commit
         run: |
-          if [ -d "baseline-repo/.git" ]; then
+          # 增加对 HEAD 有效性的严格校验，防止空分支导致 exit 128
+          if [ -d "baseline-repo/.git" ] && git -C baseline-repo rev-parse --verify HEAD >/dev/null 2>&1; then
             git -C baseline-repo rev-parse HEAD > $GITHUB_WORKSPACE/baseline.commit.lock
             echo "🔒 Baseline locked at commit: $(cat $GITHUB_WORKSPACE/baseline.commit.lock)"
           else
-            echo "⚠️ No baseline repository found. Skipping lock."
+            echo "⚠️ No valid baseline commit found (branch may be empty or missing). Skipping lock."
           fi
 
       # =============================================================
