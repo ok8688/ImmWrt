@@ -10,12 +10,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ✅ 优化后的缓存：只缓存源码压缩包，防爆内存，极致提速
+      # ✅ 优化后的缓存：只缓存源码压缩包，防爆内存，精准提速
       - name: Cache
         uses: actions/cache@v4
         with:
           path: openwrt/dl
-          key: ${{ runner.os }}-immwrt-${{ hashFiles('**/*.yml') }}
+          key: ${{ runner.os }}-immwrt-${{ hashFiles('.github/workflows/*.yml') }}
 
       - name: Init
         run: |
@@ -30,18 +30,24 @@ jobs:
       - name: Feeds
         run: |
           cd openwrt
+          
+          # 1. 更新所有基础源
           ./scripts/feeds update -a
           
-          # 物理删除旧版，为官方正统源让路
+          # 2. ✅ 采纳大佬建议：第一次全量安装，建立极其稳固的初始依赖树
+          ./scripts/feeds install -a
+          
+          # 3. 在依赖树完整的基础上进行“物理切除”
           rm -rf feeds/luci/applications/luci-app-passwall
           rm -rf feeds/packages/net/passwall
           rm -rf feeds/packages/net/xray-core
           rm -rf feeds/packages/net/sing-box
 
-          # 强行注入 Passwall 官方组织最新版
+          # 4. 强行注入 Passwall 官方组织最新版源码
           git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/openwrt-passwall-packages
           git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/openwrt-passwall
 
+          # 5. ✅ 再次安装，刷新并完美覆盖最终的依赖关系
           ./scripts/feeds install -a
 
       - name: Config
@@ -96,7 +102,7 @@ jobs:
           echo "CONFIG_PACKAGE_curl=y" >> .config
           echo "CONFIG_PACKAGE_wget-ssl=y" >> .config
 
-          # ✅ PVE 满血驱动包
+          # ✅ PVE 满血驱动包 (已修复之前的拼写遗漏)
           echo "CONFIG_PACKAGE_qemu-ga=y" >> .config
           echo "CONFIG_PACKAGE_kmod-virtio-net=y" >> .config
           echo "CONFIG_PACKAGE_kmod-virtio-blk=y" >> .config
@@ -121,18 +127,9 @@ jobs:
           cat > files/etc/uci-defaults/99-init-settings << 'EOF'
           #!/bin/sh
           
-          # 1. 优雅开启 Flow Offloading 转发加速 (告别 sed 强改源码)
+          # 优雅开启 Flow Offloading 转发加速
           uci set firewall.@defaults[0].flow_offloading='1'
           uci commit firewall
-
-          # 2. UPnP 开启并自启
-          uci set upnpd.config.enabled='1'
-          uci commit upnpd
-          /etc/init.d/miniupnpd enable
-          /etc/init.d/miniupnpd start
-          
-          # 3. 核心安全配置 (严格保证底层权限)
-          [ -f /etc/config/smartdns ] && chmod 600 /etc/config/smartdns
           
           exit 0
           EOF
