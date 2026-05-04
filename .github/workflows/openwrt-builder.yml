@@ -1,11 +1,10 @@
-name: Build ImmWrt Enterprise Factory v3.18.11
+name: Build ImmWrt Enterprise Factory v3.18.12
 
 on:
   workflow_dispatch:
 
 permissions:
   contents: write
-  id-token: write
 
 jobs:
   build:
@@ -35,11 +34,11 @@ jobs:
           EOF
 
       # =============================================================
-      # 📥 2. 源码 (锁定 v25.12.0-rc2) + 官方 Feeds 路径修正
+      # 📥 2. 源码 (锁定 v25.12.0-rc2) + 官方 Feeds 路径
       # =============================================================
       - name: Clone Source & Immutable Feeds Lock
         run: |
-          # 🚨 需求落实：锁定 v25.12.0-rc2 标签
+          # 🚨 需求落实：严格锁定 v25.12.0-rc2 标签
           git clone -b v25.12.0-rc2 --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
           
           cd openwrt
@@ -53,21 +52,28 @@ jobs:
           EOF
 
       # =============================================================
-      # 🔥 3. Feeds 稳定化 (🚨 注入 GITHUB_TOKEN 解决 128 鉴权死锁)
+      # 🔥 3. Feeds 稳定化 (🚨 彻底解决 128 鉴权死锁：预克隆模式)
       # =============================================================
-      - name: Atomic Feeds Sync (Token Hardening Mode)
+      - name: Atomic Feeds Sync (Pre-cloning Success Mode)
         run: |
-          # 🚨 核心修复：在 Git 全局注入 GitHub 运行令牌，让所有 HTTPS 请求自动通过鉴权
-          git config --global url."https://${{ github.token }}@github.com/".insteadOf "https://github.com/"
-          
           cd openwrt
+          
+          # 🚨 核心修正：移除所有 Token 注入，回归匿名 HTTPS
+          git config --global --unset-all url."https://github.com/".insteadOf || true
+          
           # 彻底清除旧缓存
           rm -rf ./feeds ./package/feeds
           
-          # 更新基础 Feeds
-          ./scripts/feeds update -a || (sleep 30 && ./scripts/feeds update -a)
+          # 🚨 核心修正：针对“顽固”仓库执行前置物理克隆，确保目录 100% 存在
+          # 这样脚本扫描时会直接识别为本地已就绪，跳过不稳定的 Feeds 下载逻辑
+          mkdir -p feeds
+          git clone --depth 1 https://github.com/openwrt-passwall/passwall-packages.git feeds/passwall_pkgs
+          git clone --depth 1 https://github.com/openwrt-passwall/openwrt-passwall.git feeds/passwall_luci
           
-          # 🚨 需求落实：物理切除挂载点 UI，保留底层核心
+          # 更新其余索引 (packages/luci/routing)
+          ./scripts/feeds update -a || (sleep 20 && ./scripts/feeds update -a)
+          
+          # 🚨 需求落实：物理切除挂载点 UI
           rm -rf feeds/luci/applications/luci-app-fstab || true
           
           # 安装所有依赖
@@ -123,13 +129,13 @@ jobs:
           export FORCE_UNSAFE_CONFIGURE=1
           make tools/install -j$(nproc)
           make toolchain/install -j$(nproc)
-          # Go 组件单线程保底策略
+          # Go 组件保底策略
           make package/compile -j$(nproc) V=s || make package/compile -j1 V=s
           make package/install -j$(nproc)
           make target/install -j$(nproc)
 
       # =============================================================
-      # 🚨 6. 产物真值校验 (Artifact Verification)
+      # 🚨 6. 产物真值证明 (Artifact Verification)
       # =============================================================
       - name: Artifact Proof & Image Integrity
         run: |
@@ -141,12 +147,12 @@ jobs:
           comm -23 $GITHUB_WORKSPACE/required.tokens.txt $GITHUB_WORKSPACE/artifact.tokens.txt > $GITHUB_WORKSPACE/missing.tokens.txt
           
           if [ -s $GITHUB_WORKSPACE/missing.tokens.txt ]; then
-            echo "❌ CRITICAL: Capability Breach! Missing mandatory packages."
+            echo "❌ CRITICAL: Capability Breach! Missing components."
             cat $GITHUB_WORKSPACE/missing.tokens.txt
             exit 1
           fi
           
-          find openwrt/bin/targets -type f \( -name "*.img.gz" -o -name "*.gz" \) | grep -q "." || { echo "❌ NO FIRMWARE IMAGE FOUND"; exit 1; }
+          find openwrt/bin/targets -type f \( -name "*.img.gz" -o -name "*.gz" \) | grep -q "." || { echo "❌ NO IMAGE FOUND"; exit 1; }
           echo "✅ Final Verdict: Artifact proof verified."
 
       # =============================================================
@@ -155,7 +161,7 @@ jobs:
       - name: Release Assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ImmWrt-Factory-v3.18.11-${{ github.run_number }}
+          tag_name: ImmWrt-Factory-v3.18.12-${{ github.run_number }}
           files: |
             openwrt/bin/targets/x86/64/*.gz
             ${{ github.workspace }}/feeds.provenance.lock
