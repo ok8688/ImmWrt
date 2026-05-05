@@ -157,7 +157,7 @@ jobs:
           tag_name: ${{ steps.tag.outputs.release_tag }}
           name: ImmWrt v3.32
           body: |
-            ### 🚀 v3.32 定型修补版 (终极形态)
+            ### 🚀 v3.32 定型版
             - **彻底删除挂载点**：引入 JSON 级菜单切除手术，根除幽灵菜单。
             - **BBR 内核级正确启用**：适配新版 `fq_codel` 防断流加载。
             - **极致安全与性能**：保留 600 权限死锁与 N100 专属软硬件分流。
