@@ -1,4 +1,4 @@
-name: Build ImmWrt Enterprise Factory v3.31
+name: Build ImmWrt Enterprise Factory v3.32
 on:
   workflow_dispatch:
 permissions:
@@ -13,10 +13,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: openwrt/dl
-          key: ${{ runner.os }}-immwrt-v331-${{ hashFiles('.github/workflows/*.yml') }}
+          key: ${{ runner.os }}-immwrt-v332-${{ hashFiles('.github/workflows/*.yml') }}
       - name: Init Environment
         run: |
           sudo apt update
+          # jq 工具已在此处安装，为后续清理菜单做准备
           sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib \
           gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget jq
       - name: Clone Source
@@ -27,9 +28,8 @@ jobs:
           cd openwrt
           ./scripts/feeds update -a
           
-          # ✅ 物理删除挂载点（终极解法）
+          # ✅ 第一层查杀：物理删除挂载点功能包
           rm -rf feeds/luci/applications/luci-app-fstab
-          
           ./scripts/feeds uninstall luci-app-fstab || true
           
           ./scripts/feeds uninstall luci-app-passwall xray-core sing-box || true
@@ -37,17 +37,29 @@ jobs:
           git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/openwrt-passwall
           ./scripts/feeds update -i
           ./scripts/feeds install -a
+
+          # ✅ 第二层查杀（引入 V1 神技）：外科手术式清理底层 JSON 幽灵菜单
+          MENU_DIR="feeds/luci/modules/luci-mod-system/root/usr/share/luci/menu.d"
+          if [ -d "$MENU_DIR" ]; then
+            for f in $MENU_DIR/*.json; do
+              [ -f "$f" ] || continue
+              jq 'del(."admin/system/mounts", ."admin/services/mounts")' "$f" > tmp.json && mv tmp.json "$f" || true
+            done
+          fi
+
       - name: Hardened Config & Ultimate Injection
         run: |
           cd openwrt
           
           mkdir -p files/etc/sysctl.d
           cat > files/etc/sysctl.d/99-bbr.conf << 'EOF'
-          net.core.default_qdisc=fq
+          # ✅ 完美修复：顺应新内核，使用 fq_codel 队列
+          net.core.default_qdisc=fq_codel
           net.ipv4.tcp_congestion_control=bbr
           net.ipv4.tcp_fastopen=3
           net.ipv4.tcp_mtu_probing=1
           EOF
+          
           mkdir -p files/etc/uci-defaults
           cat > files/etc/uci-defaults/99-init-settings << 'EOF'
           #!/bin/sh
@@ -60,6 +72,7 @@ jobs:
           exit 0
           EOF
           chmod +x files/etc/uci-defaults/99-init-settings
+          
           rm -f .config
           {
             echo "CONFIG_TARGET_x86=y"
@@ -100,6 +113,7 @@ jobs:
             echo "CONFIG_PACKAGE_curl=y"
             echo "CONFIG_PACKAGE_wget-ssl=y"
             echo "CONFIG_PACKAGE_intel-microcode=y"
+            
             # ✅ 修正后的 BBR（唯一稳定方案）
             echo "CONFIG_PACKAGE_kmod-tcp-bbr=y"
             echo "CONFIG_PACKAGE_kmod-sched-core=y"
@@ -107,28 +121,37 @@ jobs:
             echo "CONFIG_PACKAGE_kmod-virtio-blk=y"
             echo "CONFIG_PACKAGE_kmod-nft-offload=y"
             echo "CONFIG_PACKAGE_firewall4=y"
+
+            # ✅ 第三层查杀：阻断底层挂载服务
+            echo "CONFIG_PACKAGE_block-mount=n"
+            echo "CONFIG_PACKAGE_luci-app-fstab=n"
           } >> .config
+          
           make defconfig
           sed -i 's/CONFIG_PACKAGE_luci-app-fstab=y/# CONFIG_PACKAGE_luci-app-fstab is not set/g' .config
+
       - name: Build World
         run: |
           cd openwrt
           export FORCE_UNSAFE_CONFIGURE=1
           make download -j8
           make -j$(nproc) V=s || make -j1 V=s
+
       - name: Generate Release Tag
         id: tag
         run: |
           echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.release_tag }}
-          name: ImmWrt v3.31 Enterprise (N100 + PVE)
+          name: ImmWrt v3.32 Enterprise
           body: |
-            ### 🚀 v3.31 定型修补版
-            - **彻底删除挂载点**
-            - **BBR 内核级正确启用**
+            ### 🚀 v3.32 定型修补版 (终极形态)
+            - **彻底删除挂载点**：引入 JSON 级菜单切除手术，根除幽灵菜单。
+            - **BBR 内核级正确启用**：适配新版 `fq_codel` 防断流加载。
+            - **极致安全与性能**：保留 600 权限死锁与 N100 专属软硬件分流。
           files: |
             openwrt/bin/targets/x86/64/*.gz
             openwrt/bin/targets/x86/64/sha256sums
