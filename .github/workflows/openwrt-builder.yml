@@ -1,6 +1,8 @@
-name: Build ImmWrt Enterprise Factory v3.32
+name: Build ImmWrt v3.32
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '26 19 * * 1' # UTC时间每周一19:26 (精准对应香港时间每周二凌晨03:26)
 permissions:
   contents: write
 jobs:
@@ -153,7 +155,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.release_tag }}
-          name: ImmWrt v3.32 Enterprise
+          name: ImmWrt v3.32
           body: |
             ### 🚀 v3.32 定型修补版 (终极形态)
             - **彻底删除挂载点**：引入 JSON 级菜单切除手术，根除幽灵菜单。
