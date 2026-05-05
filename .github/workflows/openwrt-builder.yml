@@ -1,56 +1,46 @@
-name: Build ImmWrt Enterprise Factory v3.30
-
+name: Build ImmWrt Enterprise Factory v3.31
 on:
   workflow_dispatch:
-
-# 🚨 必须赋予 actions 写入权限，否则无法发布 Release
 permissions:
   contents: write
-
 jobs:
   build:
     runs-on: ubuntu-22.04
-
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
-
       - name: Cache (Speed Optimization)
         uses: actions/cache@v4
         with:
           path: openwrt/dl
-          # 独占缓存 Key，避免旧依赖污染
-          key: ${{ runner.os }}-immwrt-v330-${{ hashFiles('.github/workflows/*.yml') }}
-
+          key: ${{ runner.os }}-immwrt-v331-${{ hashFiles('.github/workflows/*.yml') }}
       - name: Init Environment
         run: |
           sudo apt update
           sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib \
           gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget jq
-
       - name: Clone Source
         run: |
-          # 锁定 v25.12.0-rc2 最强底座
           git clone -b v25.12.0-rc2 --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
-
       - name: Feeds & Official Sources
         run: |
           cd openwrt
           ./scripts/feeds update -a
           
-          # 卸载旧代理源，替换为 Passwall 官方正统源
+          # ✅ 物理删除挂载点（终极解法）
+          rm -rf feeds/luci/applications/luci-app-fstab
+          
+          ./scripts/feeds uninstall luci-app-fstab || true
+          
           ./scripts/feeds uninstall luci-app-passwall xray-core sing-box || true
           git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/openwrt-passwall-packages
           git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/openwrt-passwall
-
           ./scripts/feeds update -i
           ./scripts/feeds install -a
-
       - name: Hardened Config & Ultimate Injection
         run: |
           cd openwrt
           
-          # 1️⃣ 底层优化：BBR 完整体运行脚本
           mkdir -p files/etc/sysctl.d
           cat > files/etc/sysctl.d/99-bbr.conf << 'EOF'
           net.core.default_qdisc=fq
@@ -58,40 +48,32 @@ jobs:
           net.ipv4.tcp_fastopen=3
           net.ipv4.tcp_mtu_probing=1
           EOF
-
-          # 2️⃣ 底层优化：权限硬化 (600) 与安全初始化
           mkdir -p files/etc/uci-defaults
           cat > files/etc/uci-defaults/99-init-settings << 'EOF'
           #!/bin/sh
           uci set luci.main.mediaurlbase='/luci-static/argon'
           uci commit luci
-          # UPnP 默认关闭
           [ -f /etc/init.d/upnpd ] && /etc/init.d/upnpd disable
-          # 核心网络配置隐私锁死 (严格落实官方 600 权限标准)
           for conf in smartdns dhcp network passwall; do
             [ -f /etc/config/$conf ] && chmod 600 /etc/config/$conf
           done
           exit 0
           EOF
           chmod +x files/etc/uci-defaults/99-init-settings
-
           rm -f .config
           {
-            # 基础架构
             echo "CONFIG_TARGET_x86=y"
             echo "CONFIG_TARGET_x86_64=y"
             echo "CONFIG_TARGET_x86_64_DEVICE_generic=y"
             echo "CONFIG_TARGET_ROOTFS_PARTSIZE=2048"
             echo "CONFIG_TARGET_ROOTFS_EXT4FS=y"
             
-            # 基础语言与主题
             echo "CONFIG_LUCI_LANG_zh-cn=y"
             echo "CONFIG_PACKAGE_luci-light=y"
             echo "CONFIG_PACKAGE_luci-theme-argon=y"
             echo "CONFIG_PACKAGE_luci-app-argon-config=y"
             echo "CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y"
             
-            # 代理与解析
             echo "CONFIG_PACKAGE_luci-app-passwall=y"
             echo "CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y"
             echo "CONFIG_PACKAGE_xray-core=y"
@@ -100,20 +82,17 @@ jobs:
             echo "CONFIG_PACKAGE_luci-app-smartdns=y"
             echo "CONFIG_PACKAGE_luci-i18n-smartdns-zh-cn=y"
             
-            # 端口映射与 DDNS
             echo "CONFIG_PACKAGE_luci-app-ddns=y"
             echo "CONFIG_PACKAGE_luci-i18n-ddns-zh-cn=y"
             echo "CONFIG_PACKAGE_ddns-scripts-cloudflare=y"
             echo "CONFIG_PACKAGE_luci-app-upnp=y"
             echo "CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=y"
             
-            # 高级运维
             echo "CONFIG_PACKAGE_luci-app-ttyd=y"
             echo "CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y"
             echo "CONFIG_PACKAGE_luci-app-advanced-reboot=y"
             echo "CONFIG_PACKAGE_luci-i18n-advanced-reboot-zh-cn=y"
             
-            # 实用工具与硬件指令集
             echo "CONFIG_PACKAGE_qemu-ga=y"
             echo "CONFIG_PACKAGE_htop=y"
             echo "CONFIG_PACKAGE_nano=y"
@@ -121,50 +100,35 @@ jobs:
             echo "CONFIG_PACKAGE_curl=y"
             echo "CONFIG_PACKAGE_wget-ssl=y"
             echo "CONFIG_PACKAGE_intel-microcode=y"
-
-            # 🚨 终极补齐：BBR 核心模块
+            # ✅ 修正后的 BBR（唯一稳定方案）
             echo "CONFIG_PACKAGE_kmod-tcp-bbr=y"
-
-            # 🚨 性能释放：PVE 驱动与软路由分流
+            echo "CONFIG_PACKAGE_kmod-sched-core=y"
             echo "CONFIG_PACKAGE_kmod-virtio-net=y"
             echo "CONFIG_PACKAGE_kmod-virtio-blk=y"
             echo "CONFIG_PACKAGE_kmod-nft-offload=y"
             echo "CONFIG_PACKAGE_firewall4=y"
-
-            # 🚫 阉割挂载点 UI (保证底层编译通过，仅隐藏菜单)
-            echo "# CONFIG_PACKAGE_luci-app-fstab is not set"
-            
           } >> .config
-
-          # 让系统自行解决底层依赖，不强行干预
           make defconfig
-
+          sed -i 's/CONFIG_PACKAGE_luci-app-fstab=y/# CONFIG_PACKAGE_luci-app-fstab is not set/g' .config
       - name: Build World
         run: |
           cd openwrt
           export FORCE_UNSAFE_CONFIGURE=1
-          # 集中多线程下载源码
           make download -j8
-          # 满载编译，出错时自动切换单线程排错
           make -j$(nproc) V=s || make -j1 V=s
-
       - name: Generate Release Tag
         id: tag
         run: |
-          # 生成类似 2026.05.05-1230 的时间标签
           echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.release_tag }}
-          name: ImmWrt v3.30 Enterprise (N100 + PVE)
+          name: ImmWrt v3.31 Enterprise (N100 + PVE)
           body: |
-            ### 🚀 终极定型版固件编译完成
-            - **纯净 UI**：彻底移除了挂载点菜单，防止误操作。
-            - **满血网络**：BBR 与 FQ 队列开机即插即用生效。
-            - **N100 优化**：软件流量分流与 PVE VirtIO 底层驱动全数加载。
-            - **硬化安全**：SmartDNS 及核心组件 600 权限已锁死，UPnP 默认休眠。
+            ### 🚀 v3.31 定型修补版
+            - **彻底删除挂载点**
+            - **BBR 内核级正确启用**
           files: |
             openwrt/bin/targets/x86/64/*.gz
             openwrt/bin/targets/x86/64/sha256sums
