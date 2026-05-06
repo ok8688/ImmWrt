@@ -122,7 +122,6 @@ jobs:
             echo "CONFIG_PACKAGE_unzip=y"
             echo "CONFIG_PACKAGE_curl=y"
             echo "CONFIG_PACKAGE_wget-ssl=y"
-            echo "CONFIG_PACKAGE_intel-microcode=y"
             
             echo "CONFIG_PACKAGE_kmod-tcp-bbr=y"
             echo "CONFIG_PACKAGE_kmod-sched-core=y"
@@ -149,7 +148,6 @@ jobs:
           
           make -j$(nproc) V=s || make -j$(nproc) V=s || make -j1 V=s
 
-      # ✅ 升级 1：更专业的 Release 命名体系 (自带 v3.33 前缀)
       - name: Generate Release Tag
         id: tag
         run: |
@@ -165,13 +163,13 @@ jobs:
             - **彻底删除挂载点**：引入 JSON 级菜单切除手术，根除幽灵菜单。
             - **极致网络架构**：BBR + `fq_codel` + `tcp_fin_timeout=15` 防短连接堆积。
             - **极强流水线抗风险**：前置 `feeds clean`、下载防残包、多线程双重试机制已全线部署。
+            - **极简底层裁剪**：拔除 `intel-microcode` 避免并发冲突，完美适配 PVE 纯虚拟化环境。
           files: |
             openwrt/bin/targets/x86/64/*combined*.img.gz
             openwrt/bin/targets/x86/64/sha256sums
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ✅ 升级 2：自动清理历史版本，防爆仓 (保留最近 5 个版本 = 约一个多月的可用回滚空间)
       - name: Cleanup Old Releases
         uses: dev-drprasad/delete-older-releases@v0.3.3
         with:
