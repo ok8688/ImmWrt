@@ -26,7 +26,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: openwrt/dl
-          key: ${{ runner.os }}-immwrt-v332-${{ hashFiles('.github/workflows/*.yml') }}
+          key: ${{ runner.os }}-immwrt-v333-${{ hashFiles('.github/workflows/*.yml') }}
 
       - name: Feeds & Official Sources
         run: |
@@ -159,7 +159,7 @@ jobs:
           tag_name: ${{ steps.tag.outputs.release_tag }}
           name: ImmWrt v3.33
           body: |
-            ### 🚀 v3.32 定型修补版 (工业级稳定形态)
+            ### 🚀 v3.33 纯净稳定版
             - **彻底删除挂载点**：引入 JSON 级菜单切除手术，根除幽灵菜单。
             - **极致网络架构**：BBR + `fq_codel` + `tcp_fin_timeout=15` 防短连接堆积。
             - **极强流水线抗风险**：前置 `feeds clean`、下载防残包、多线程双重试机制已全线部署。
