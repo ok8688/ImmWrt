@@ -5,6 +5,7 @@ on:
     - cron: '26 19 * * 1' # UTC时间每周一19:26 (精准对应香港时间每周二凌晨03:26)
 permissions:
   contents: write
+  actions: write # 清理旧版本需要此权限
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -46,7 +47,7 @@ jobs:
           ./scripts/feeds update -i
           ./scripts/feeds install -a
 
-          # ✅ 极客微调：使用 $f.tmp 确保 JSON 清理过程绝对安全无竞争
+          # 极客微调：使用 $f.tmp 确保 JSON 清理过程绝对安全无竞争
           MENU_DIR="feeds/luci/modules/luci-mod-system/root/usr/share/luci/menu.d"
           if [ -d "$MENU_DIR" ]; then
             for f in $MENU_DIR/*.json; do
@@ -148,10 +149,11 @@ jobs:
           
           make -j$(nproc) V=s || make -j$(nproc) V=s || make -j1 V=s
 
+      # ✅ 升级 1：更专业的 Release 命名体系 (自带 v3.33 前缀)
       - name: Generate Release Tag
         id: tag
         run: |
-          echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+          echo "release_tag=v3.33-$(date +"%Y%m%d-%H%M")" >> $GITHUB_OUTPUT
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
@@ -166,5 +168,14 @@ jobs:
           files: |
             openwrt/bin/targets/x86/64/*combined*.img.gz
             openwrt/bin/targets/x86/64/sha256sums
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ✅ 升级 2：自动清理历史版本，防爆仓 (保留最近 5 个版本 = 约一个多月的可用回滚空间)
+      - name: Cleanup Old Releases
+        uses: dev-drprasad/delete-older-releases@v0.3.3
+        with:
+          keep_latest: 5
+          delete_tags: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
