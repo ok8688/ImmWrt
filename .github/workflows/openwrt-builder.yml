@@ -1,4 +1,4 @@
-name: Build ImmWrt v3.36a
+name: Build ImmWrt v3.36b
 on:
   workflow_dispatch:
   schedule:
@@ -15,6 +15,15 @@ jobs:
 
       - name: Init Environment
         run: |
+          # 🚀 物理極限平衡補丁：外掛 4GB 虛擬內存，防 Go/Rust 爆內存，同時絕對保護磁盤空間
+          sudo swapoff -a
+          sudo rm -f /swapfile
+          sudo fallocate -l 4G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h # 打印內存狀態，見證 11GB 黃金比例
+          
           sudo apt update
           # 滿足底層編譯環境的基礎依賴，已包含 ccache
           sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib \
@@ -29,16 +38,16 @@ jobs:
         uses: actions/cache@v4
         with:
           path: openwrt/dl
-          key: ${{ runner.os }}-dl-v336a-${{ hashFiles('.github/workflows/*.yml') }}
+          key: ${{ runner.os }}-dl-v336b-${{ hashFiles('.github/workflows/*.yml') }}
 
       # 🚀 工業級雙軌快取策略 2：底層算力結晶 (採用前綴匹配，允許跨版本無限復用)
       - name: Cache CCache (Compiler Objects)
         uses: actions/cache@v4
         with:
           path: openwrt/.ccache
-          key: ${{ runner.os }}-ccache-v336a-${{ github.run_id }}
+          key: ${{ runner.os }}-ccache-v336b-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-ccache-v336a-
+            ${{ runner.os }}-ccache-v336b-
             
       - name: Feeds & Official Sources
         run: |
@@ -189,15 +198,16 @@ jobs:
       - name: Generate Release Tag
         id: tag
         run: |
-          echo "release_tag=v3.36a-$(date +"%Y%m%d-%H%M")" >> $GITHUB_OUTPUT
+          echo "release_tag=v3.36b-$(date +"%Y%m%d-%H%M")" >> $GITHUB_OUTPUT
           
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.release_tag }}
-          name: ImmWrt v3.36a
+          name: ImmWrt v3.36b
           body: |
-            ### 🚀 v3.36a 性能與安全巔峰版 (快取解鎖版)
+            ### 🚀 v3.36b 性能與安全巔峰版 (防爆內存裝甲版)
+            - **物理極限突破**：部署 4GB Swap 虛擬內存裝甲，徹底根除 Go/Rust 巨無霸並發編譯導致的 OOM 崩潰，同時完美平衡磁盤空間。
             - **編譯架構升級**：正式解鎖 `CONFIG_DEVEL=y` 與 CCache，大幅壓縮後續編譯時間。
             - **TLS/SSL 加密基礎**：注入 `ca-bundle` 與 `ca-certificates`，確保 PassWall/DoH 加密握手零故障。
             - **TCP 棧優化**：`tcp_fin_timeout` 由 15 調整至 30，更適配高延遲科學上網環境，減少偶發斷流。
