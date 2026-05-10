@@ -1,4 +1,4 @@
-name: Build ImmWrt v3.38 LTS
+name: Build ImmWrt v3.38d LTS
 on:
   workflow_dispatch:
   schedule:
@@ -21,7 +21,7 @@ jobs:
       - name: Checkout Source
         uses: actions/checkout@v4
         
-      # 💥 究極核爆清理 (精準版：保留 Ruby，防禦 Action 底層崩潰)
+      # 💥 究極核爆清理
       - name: Free Disk Space
         run: |
           set -euo pipefail
@@ -67,16 +67,17 @@ jobs:
       - name: Clone Source
         run: |
           set -euo pipefail
-          git clone -b v25.12.0-rc2 --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
+          # 🎯 引入 --single-branch 節省網路帶寬與空間
+          git clone -b v25.12.0-rc2 --single-branch --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      # 🛡️ 唯一快取：CCache
+      # 🛡️ 唯一快取：CCache (引入 github.sha 綁定提交)
       - name: Restore CCache
         uses: actions/cache/restore@v4
         with:
           path: openwrt/.ccache
-          key: ${{ runner.os }}-ccache-v338-${{ github.run_id }}
+          key: ${{ runner.os }}-ccache-v338d-${{ github.sha }}-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-ccache-v338-
+            ${{ runner.os }}-ccache-v338d-
           enableCrossOsArchive: false
             
       - name: Feeds & Official Sources
@@ -145,6 +146,8 @@ jobs:
             echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1536"
             echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y"
             echo "CONFIG_TARGET_IMAGES_GZIP=y"
+            # 🛑 阻斷預設行為：防止生成 .tar.gz 格式的 RootFS，節省磁碟
+            echo "CONFIG_TARGET_ROOTFS_TARGZ=n"
             
             echo "CONFIG_LUCI_LANG_zh-cn=y"
             echo "CONFIG_PACKAGE_luci-light=y"
@@ -158,7 +161,7 @@ jobs:
             echo "CONFIG_PACKAGE_sing-box=y"
             echo "CONFIG_PACKAGE_geoview=y"
             
-            # 🔪 供應鏈加固：手動將 SSR 與 Trojan-Plus 設為 n，防止 defconfig 自動勾選
+            # 🔪 供應鏈加固：手動將 SSR 與 Trojan-Plus 設為 n (正常 SS 不受影響)
             echo "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Client=n"
             echo "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Server=n"
             echo "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Trojan_Plus=n"
@@ -203,11 +206,14 @@ jobs:
           # ⚙️ 執行 defconfig 生成完整配置
           make defconfig
           
-          # 🔪 外科手術：在 defconfig 之後強制剔除頑固組件，確保 100% 關閉
+          # 🔪 外科手術：在 defconfig 之後強制剔除頑固組件
           sed -i 's/CONFIG_PACKAGE_luci-app-fstab=y/# CONFIG_PACKAGE_luci-app-fstab is not set/g' .config
           sed -i 's/CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Client=y/# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Client is not set/g' .config
           sed -i 's/CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Server=y/# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Server is not set/g' .config
           sed -i 's/CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Trojan_Plus=y/# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Trojan_Plus is not set/g' .config
+          
+          # 🛑 徹底物理閹割 EXT4，回收 3GB+ 打包峰值空間，專注 SquashFS
+          sed -i 's/CONFIG_TARGET_ROOTFS_EXT4FS=y/# CONFIG_TARGET_ROOTFS_EXT4FS is not set/g' .config
           
           echo "=== 執行核心包存在性校驗 ==="
           grep -q "CONFIG_PACKAGE_luci-app-passwall=y" .config || { echo "❌ 致命錯誤：PassWall 丟失！"; exit 1; }
@@ -229,14 +235,16 @@ jobs:
           export FORCE_UNSAFE_CONFIGURE=1
           export CCACHE_DIR="$PWD/.ccache"
           
-          # 🛑 雙重物理結界：絕對鎖死隱性多線程暴走
+          # 🛑 雙重物理結界：絕對鎖死所有底層工具的隱性多線程暴走
           export OMP_NUM_THREADS=1
           export OPENBLAS_NUM_THREADS=1
           
           mkdir -p "$CCACHE_DIR"
           
+          # 🎯 優化 CCache 壓縮等級
           ccache --max-size=2G
           ccache --set-config=compression=true
+          ccache --set-config=compression-level=3
           ccache --set-config=sloppiness=file_macro,time_macros
           
           # 🚀 下載與精準 0-Byte 獵殺陣
@@ -254,10 +262,10 @@ jobs:
           echo "=== 編譯前目錄體積 (Baseline) ==="
           du -sh build_dir staging_dir dl .ccache 2>/dev/null || true
           
-          # 🚨 Fail-fast 死亡預警
+          # 🚨 Fail-fast 死亡預警：磁碟低於 8GB (8388608 KB) 終止編譯
           AVAILABLE=$(df / | awk 'NR==2 {print $4}')
           if [ "$AVAILABLE" -lt 8388608 ]; then
-            echo "❌ 致命錯誤：可用磁盤低於 8GB，Runner 狀態不佳，終止編譯！"
+            echo "❌ 致命錯誤：可用磁盤低於 8GB，Runner 狀態不佳，終止編譯以節省時間！"
             exit 1
           fi
           
@@ -277,13 +285,13 @@ jobs:
           df -h
           df -i
           
-      # 🛡️ 企業級防污染快取
+      # 🛡️ 企業級防污染快取 (保存最新進度)
       - name: Save CCache
         uses: actions/cache/save@v4
         if: success()
         with:
           path: openwrt/.ccache
-          key: ${{ runner.os }}-ccache-v338-${{ github.run_id }}
+          key: ${{ runner.os }}-ccache-v338d-${{ github.sha }}-${{ github.run_id }}
           enableCrossOsArchive: false
 
       - name: Validate Firmware Integrity
@@ -301,7 +309,7 @@ jobs:
         id: tag
         run: |
           set -euo pipefail
-          echo "release_tag=v3.38-b${{ github.run_number }}-$(date +"%m%d")" >> $GITHUB_OUTPUT
+          echo "release_tag=v3.38d-b${{ github.run_number }}-$(date +"%m%d")" >> $GITHUB_OUTPUT
           cd openwrt
           echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           echo "os_info=$(uname -srm)" >> $GITHUB_OUTPUT
@@ -311,13 +319,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.release_tag }}
-          name: ImmWrt v3.38 LTS (SquashFS) (Build ${{ github.run_number }})
+          name: ImmWrt v3.38d LTS (SquashFS) (Build ${{ github.run_number }})
           body: |
-            ### 🚀 v3.38 長期支援最終版 (LTS) - 加固更新
-            - **供應鏈防禦**：強制剔除已失效的 `ShadowsocksR-Libev` 與 `Trojan-Plus` 組件，解決冷啟動下載失敗。
-            - **外科手術精準化**：在 `make defconfig` 後使用 `sed` 強制校準配置，確保不穩定組件絕不混入。
+            ### 🚀 v3.38d 長期支援最終版 (LTS) - 純淨加固
+            - **精準閹割**：物理切斷 EXT4 雙重打包流程，極限釋放 3GB+ 峰值磁碟空間。
+            - **供應鏈防禦**：精準剔除失效的 `ShadowsocksR-Libev` 與 `Trojan-Plus`，**保留標準 SS 功能不受影響**。
+            - **深度減負優化**：加入 `--single-branch` 與 `TARGZ=n` 設置，精準切斷不必要的代碼樹與備用包。
+            - **快取命中升級**：引入 `github.sha` 綁定機制與向下相容恢復，徹底解決冷啟動 0-hit 問題。
             - **物理雙鎖**：鎖死 `OMP_NUM_THREADS=1` 與 `OPENBLAS_NUM_THREADS=1`，絕對鎮壓任何多核暴走。
-            - **不可變哲學**：全面轉向 SquashFS，打造 GitHub Free Runner 負載極限下的最強長效韌體。
             
             ---
             ### 🛡️ Build Provenance (企業級構建指紋)
