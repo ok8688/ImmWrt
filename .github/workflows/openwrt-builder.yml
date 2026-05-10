@@ -141,7 +141,7 @@ jobs:
             
             echo "CONFIG_CCACHE=y"
             
-            # 🎯 終極平衡：RootFS 設為 1536MB，預留未來擴展空間，全面擁抱 SquashFS
+            # 🎯 終極平衡：RootFS 1536MB，全面擁抱 SquashFS
             echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1536"
             echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y"
             echo "CONFIG_TARGET_IMAGES_GZIP=y"
@@ -157,6 +157,12 @@ jobs:
             echo "CONFIG_PACKAGE_xray-core=y"
             echo "CONFIG_PACKAGE_sing-box=y"
             echo "CONFIG_PACKAGE_geoview=y"
+            
+            # 🔪 供應鏈加固：手動將 SSR 與 Trojan-Plus 設為 n，防止 defconfig 自動勾選
+            echo "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Client=n"
+            echo "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Server=n"
+            echo "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Trojan_Plus=n"
+
             echo "CONFIG_PACKAGE_smartdns=y"
             echo "CONFIG_PACKAGE_luci-app-smartdns=y"
             echo "CONFIG_PACKAGE_luci-i18n-smartdns-zh-cn=y"
@@ -194,8 +200,14 @@ jobs:
             echo "CONFIG_PACKAGE_ca-certificates=y"
           } >> .config
           
+          # ⚙️ 執行 defconfig 生成完整配置
           make defconfig
+          
+          # 🔪 外科手術：在 defconfig 之後強制剔除頑固組件，確保 100% 關閉
           sed -i 's/CONFIG_PACKAGE_luci-app-fstab=y/# CONFIG_PACKAGE_luci-app-fstab is not set/g' .config
+          sed -i 's/CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Client=y/# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Client is not set/g' .config
+          sed -i 's/CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Server=y/# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Server is not set/g' .config
+          sed -i 's/CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Trojan_Plus=y/# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Trojan_Plus is not set/g' .config
           
           echo "=== 執行核心包存在性校驗 ==="
           grep -q "CONFIG_PACKAGE_luci-app-passwall=y" .config || { echo "❌ 致命錯誤：PassWall 丟失！"; exit 1; }
@@ -217,7 +229,7 @@ jobs:
           export FORCE_UNSAFE_CONFIGURE=1
           export CCACHE_DIR="$PWD/.ccache"
           
-          # 🛑 雙重物理結界：絕對鎖死所有底層工具的隱性多線程暴走
+          # 🛑 雙重物理結界：絕對鎖死隱性多線程暴走
           export OMP_NUM_THREADS=1
           export OPENBLAS_NUM_THREADS=1
           
@@ -242,10 +254,10 @@ jobs:
           echo "=== 編譯前目錄體積 (Baseline) ==="
           du -sh build_dir staging_dir dl .ccache 2>/dev/null || true
           
-          # 🚨 Fail-fast 死亡預警：磁碟低於 8GB (8388608 KB) 終止編譯
+          # 🚨 Fail-fast 死亡預警
           AVAILABLE=$(df / | awk 'NR==2 {print $4}')
           if [ "$AVAILABLE" -lt 8388608 ]; then
-            echo "❌ 致命錯誤：可用磁盤低於 8GB，Runner 狀態不佳，終止編譯以節省時間！"
+            echo "❌ 致命錯誤：可用磁盤低於 8GB，Runner 狀態不佳，終止編譯！"
             exit 1
           fi
           
@@ -301,11 +313,10 @@ jobs:
           tag_name: ${{ steps.tag.outputs.release_tag }}
           name: ImmWrt v3.38 LTS (SquashFS) (Build ${{ github.run_number }})
           body: |
-            ### 🚀 v3.38 長期支援最終版 (LTS)
-            - **精準防禦**：保留 `Ruby` 運行庫防護 Actions 暗改，改為 `find -size 0` 精準獵殺空依賴。
-            - **未來擴展**：設定 `PARTSIZE=1536`，完美平衡 Runner 負載與未來插件更新的磁碟擴展。
-            - **物理雙鎖**：注入 `OMP_NUM_THREADS=1` 與 `OPENBLAS_NUM_THREADS=1`，絕對鎮壓任何多核暴走。
-            - **死亡預警**：編譯前哨加入 `8GB` 磁碟閾值探測，完美落實 Fail-fast 哲學。
+            ### 🚀 v3.38 長期支援最終版 (LTS) - 加固更新
+            - **供應鏈防禦**：強制剔除已失效的 `ShadowsocksR-Libev` 與 `Trojan-Plus` 組件，解決冷啟動下載失敗。
+            - **外科手術精準化**：在 `make defconfig` 後使用 `sed` 強制校準配置，確保不穩定組件絕不混入。
+            - **物理雙鎖**：鎖死 `OMP_NUM_THREADS=1` 與 `OPENBLAS_NUM_THREADS=1`，絕對鎮壓任何多核暴走。
             - **不可變哲學**：全面轉向 SquashFS，打造 GitHub Free Runner 負載極限下的最強長效韌體。
             
             ---
