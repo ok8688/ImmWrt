@@ -1,73 +1,101 @@
-name: Build ImmWrt v3.36b
+name: Build ImmWrt v3.36s
 on:
   workflow_dispatch:
   schedule:
-    - cron: '26 19 * * 1' # UTC時間每週一19:26 (精準對應香港時間每週二凌晨03:26)
+    - cron: '26 19 * * 1' # UTC時間每週一19:26
+
+# 🛑 終極併發鎖定：防止排程任務重疊引發資源踩踏
+concurrency:
+  group: immwrt-build
+  cancel-in-progress: false
+
 permissions:
   contents: write
-  actions: write # 清理舊版本需要此權限
+  actions: write
+
 jobs:
   build:
     runs-on: ubuntu-22.04
+    # 🛡️ Fail-fast 超時防禦：240 分鐘的黃金分割點，超時即判定死鎖
+    timeout-minutes: 240
+    
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
-
+        
+      # 💥 降維打擊：引入 daemon 判定，無衝突核爆清理
+      - name: Free Disk Space
+        run: |
+          set -euo pipefail
+          echo "開始清理無用環境，釋放空間..."
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          if command -v docker >/dev/null 2>&1; then
+            sudo docker system prune -af || true
+          fi
+          echo "=== 清理後磁盤狀態 ==="
+          df -h
+          
       - name: Init Environment
         run: |
-          # 🚀 物理極限平衡補丁：外掛 4GB 虛擬內存，防 Go/Rust 爆內存，同時絕對保護磁盤空間
-          sudo swapoff -a
-          sudo rm -f /swapfile
-          sudo fallocate -l 4G /swapfile
+          set -euo pipefail
+          # 🚀 滿血裝甲：掛載 8GB Swap，徹底鎮壓 Go/Rust OOM
+          sudo swapoff -a || true
+          sudo rm -f /swapfile || true
+          sudo fallocate -l 8G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
-          free -h # 打印內存狀態，見證 11GB 黃金比例
+          echo "=== 內存裝甲狀態 ==="
+          free -h
           
           sudo apt update
-          # 滿足底層編譯環境的基礎依賴，已包含 ccache
           sudo apt install -y build-essential clang flex bison g++ gawk gcc-multilib \
           gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget jq ccache
           
       - name: Clone Source
         run: |
+          set -euo pipefail
           git clone -b v25.12.0-rc2 --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
           
-      # 🚀 工業級雙軌快取策略 1：源碼下載快取 (嚴格綁定 YAML 指紋)
-      - name: Cache DL (Source Code)
-        uses: actions/cache@v4
+      # 🚀 DL 快取 (第一段：只恢復不保存，打破黑盒，統一生命週期)
+      - name: Restore DL Cache
+        uses: actions/cache/restore@v4
         with:
           path: openwrt/dl
-          key: ${{ runner.os }}-dl-v336b-${{ hashFiles('.github/workflows/*.yml') }}
+          key: ${{ runner.os }}-dl-v25.12.0-rc2
+          enableCrossOsArchive: false
 
-      # 🚀 工業級雙軌快取策略 2：底層算力結晶 (採用前綴匹配，允許跨版本無限復用)
-      - name: Cache CCache (Compiler Objects)
-        uses: actions/cache@v4
+      # 🛡️ CCache (第一段：只恢復不保存，堅守 run_id 確保滾動增量)
+      - name: Restore CCache
+        uses: actions/cache/restore@v4
         with:
           path: openwrt/.ccache
-          key: ${{ runner.os }}-ccache-v336b-${{ github.run_id }}
+          key: ${{ runner.os }}-ccache-v336s-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-ccache-v336b-
+            ${{ runner.os }}-ccache-v336s-
+          enableCrossOsArchive: false
             
       - name: Feeds & Official Sources
         run: |
+          set -euo pipefail
           cd openwrt
-          
-          # 清理 feeds 快取，確保環境絕對純淨
-          ./scripts/feeds clean
           
           ./scripts/feeds update -a
           
           rm -rf feeds/luci/applications/luci-app-fstab
           ./scripts/feeds uninstall luci-app-fstab || true
-          
           ./scripts/feeds uninstall luci-app-passwall xray-core sing-box || true
+          
+          rm -rf package/openwrt-passwall-packages
+          rm -rf package/openwrt-passwall
+          
           git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/openwrt-passwall-packages
           git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/openwrt-passwall
-          ./scripts/feeds update -i
           ./scripts/feeds install -a
           
-          # 極客微調：使用 $f.tmp 確保 JSON 清理過程絕對安全無競爭
           MENU_DIR="feeds/luci/modules/luci-mod-system/root/usr/share/luci/menu.d"
           if [ -d "$MENU_DIR" ]; then
             for f in $MENU_DIR/*.json; do
@@ -78,6 +106,7 @@ jobs:
           
       - name: Hardened Config & Ultimate Injection
         run: |
+          set -euo pipefail
           cd openwrt
           
           mkdir -p files/etc/sysctl.d
@@ -109,9 +138,9 @@ jobs:
             echo "CONFIG_TARGET_x86_64=y"
             echo "CONFIG_TARGET_x86_64_DEVICE_generic=y"
             
-            # 🎯 穩定 + 實用平衡版終極補丁：解鎖開發者模式以激活快取
             echo "CONFIG_DEVEL=y"
             echo "CONFIG_CCACHE=y"
+            echo "CONFIG_BUILD_LOG=y"
             
             echo "CONFIG_TARGET_ROOTFS_PARTSIZE=2048"
             echo "CONFIG_TARGET_ROOTFS_EXT4FS=y"
@@ -157,7 +186,6 @@ jobs:
             echo "CONFIG_PACKAGE_block-mount=n"
             echo "CONFIG_PACKAGE_luci-app-fstab=n"
             
-            # 🎯 滿血核心補丁：顯式聲明 geoview、irqbalance 與 ethtool，並注入根證書庫確保加密握手
             echo "CONFIG_PACKAGE_geoview=y"
             echo "CONFIG_PACKAGE_irqbalance=y"
             echo "CONFIG_PACKAGE_ethtool=y"
@@ -168,63 +196,125 @@ jobs:
           make defconfig
           sed -i 's/CONFIG_PACKAGE_luci-app-fstab=y/# CONFIG_PACKAGE_luci-app-fstab is not set/g' .config
           
+          # 🛡️ 靜默丟失防禦：確保核心包絕不被意外剔除
+          echo "=== 執行核心包存在性校驗 ==="
+          grep -q "CONFIG_PACKAGE_luci-app-passwall=y" .config || { echo "❌ 致命錯誤：PassWall 配置丟失！"; exit 1; }
+          grep -q "CONFIG_PACKAGE_xray-core=y" .config || { echo "❌ 致命錯誤：xray-core 配置丟失！"; exit 1; }
+          grep -q "CONFIG_PACKAGE_sing-box=y" .config || { echo "❌ 致命錯誤：sing-box 配置丟失！"; exit 1; }
+          
+          ./scripts/diffconfig.sh > diffconfig.txt
+          
       - name: Build World
         run: |
+          set -euo pipefail
           cd openwrt
+          
+          ulimit -n 4096
+          ulimit -n
+          
           export FORCE_UNSAFE_CONFIGURE=1
           export CCACHE_DIR="$PWD/.ccache"
+          
+          # 🛑 動態鎖死矩陣：自動適應 Runner 核心數
+          export MAKEFLAGS="-j$(($(nproc)/2+1))"
+          
           mkdir -p "$CCACHE_DIR"
           
-          # 📊 儀表盤：編譯前打印歷史快取狀態
-          echo "=== 編譯前 CCache 狀態 ==="
+          ccache --max-size=5G
+          ccache --set-config=compression=true
+          # 🌟 史詩級優化：忽略時間戳宏，避免 CCache 命中率崩塌
+          ccache --set-config=sloppiness=file_macro,time_macros
+          
+          # 🚀 保守派 Fail-fast 下載：退回 -j4 敬畏網絡 I/O 極限，防禦源站 Reset
+          make download -j4
+          
+          echo "=== 飛行前資源檢查 ==="
+          df -h
+          free -h
           ccache -s
           
-          # 💣 絕殺補丁：清空 Go 快取，防止 geoview 炸機
-          echo "清理過期 Go 快取..."
-          rm -rf dl/go-mod-cache
+          # 🔥 終極閉環：讓系統自動吃 MAKEFLAGS 變量，僅在崩潰時降級為單線程 debug
+          make || make -j1 V=s
           
-          # 🚀 三段式下載容錯
-          make download -j8 || true
-          find dl -size -1024c -delete
-          make download -j2 || make download -j1 V=s
-          
-          # 🔥 分級編譯策略
-          make -j$(nproc) || make -j4 || make -j1 V=s
-          
-          # 📊 儀表盤：編譯後打印戰果
           echo "=== 編譯後 CCache 戰果 ==="
           ccache -s
+          echo "=== 編譯後最終磁盤狀態 ==="
+          df -h
           
-      - name: Generate Release Tag
+      # 🛡️ 企業級防污染快取 (第二段：雙快取僅在成功後保存)
+      - name: Save DL Cache
+        uses: actions/cache/save@v4
+        if: success()
+        with:
+          path: openwrt/dl
+          key: ${{ runner.os }}-dl-v25.12.0-rc2
+          enableCrossOsArchive: false
+
+      - name: Save CCache
+        uses: actions/cache/save@v4
+        if: success()
+        with:
+          path: openwrt/.ccache
+          key: ${{ runner.os }}-ccache-v336s-${{ github.run_id }}
+          enableCrossOsArchive: false
+
+      # 🛡️ 密碼學級韌體完整性校驗與 Fail-Fast 攔截
+      - name: Validate Firmware Integrity
+        run: |
+          set -euo pipefail
+          echo "=== 執行韌體密碼學完整性校驗 ==="
+          cd openwrt/bin/targets/x86/64/
+          
+          ls -lh *combined*.img.gz || { echo "❌ 致命錯誤：未能找到 img.gz 韌體文件！"; exit 1; }
+          
+          # 原生 Exit Code 判定，確保 100% 絕對嚴謹的校驗
+          sha256sum -c sha256sums || { echo "❌ 致命錯誤：韌體校驗和不匹配！"; exit 1; }
+          echo "✅ 韌體 SHA256 完整性校驗通過"
+          
+      - name: Generate Release Tag & Provenance
         id: tag
         run: |
-          echo "release_tag=v3.36b-$(date +"%Y%m%d-%H%M")" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          # 🛡️ Tag 防撞車：結合 Run Number 確保標籤永遠唯一
+          echo "release_tag=v3.36s-b${{ github.run_number }}-$(date +"%m%d")" >> $GITHUB_OUTPUT
+          cd openwrt
+          echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "os_info=$(uname -srm)" >> $GITHUB_OUTPUT
+          echo "gcc_version=$(gcc --version | head -n1)" >> $GITHUB_OUTPUT
           
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.release_tag }}
-          name: ImmWrt v3.36b
+          name: ImmWrt v3.36s (Build ${{ github.run_number }})
           body: |
-            ### 🚀 v3.36b 性能與安全巔峰版 (防爆內存裝甲版)
-            - **物理極限突破**：部署 4GB Swap 虛擬內存裝甲，徹底根除 Go/Rust 巨無霸並發編譯導致的 OOM 崩潰，同時完美平衡磁盤空間。
-            - **編譯架構升級**：正式解鎖 `CONFIG_DEVEL=y` 與 CCache，大幅壓縮後續編譯時間。
-            - **TLS/SSL 加密基礎**：注入 `ca-bundle` 與 `ca-certificates`，確保 PassWall/DoH 加密握手零故障。
-            - **TCP 棧優化**：`tcp_fin_timeout` 由 15 調整至 30，更適配高延遲科學上網環境，減少偶發斷流。
-            - **多核中斷優化**：集成 `irqbalance`，完美釋放 N100 多核實力。
-            - **底層調試增強**：集成 `ethtool` 網卡監控工具。
-            - **滿血分流引擎**：完美修復 `geoview`，保障 `sing-box` 規則解析。
-            - **極致裁剪**：徹底移除掛載點菜單，適配虛擬化環境。
+            ### 🚀 v3.36s 封卷之作 (The SRE Finality)
+            - **黑盒破除**：將 DL 快取與 CCache 全面拆分為 Restore/Save，實現生命週期絕對掌控，杜絕污染。
+            - **防碰撞矩陣**：Release Tag 注入 `run_number`，完美防禦手動重跑導致的標籤衝突。
+            - **快取命中率暴漲**：配置 `sloppiness=time_macros`，無視編譯時間戳干擾，解鎖 CCache 極限性能。
+            - **防彈 Shell**：全域套用 `set -euo pipefail` 嚴格模式，徹底封殺隱性 Pipeline 報錯。
+            - **I/O 敬畏**：退回 `make download -j4`，在 Fail-fast 與源站防火牆之間取得完美平衡。
+            
+            ---
+            ### 🛡️ Build Provenance (企業級構建指紋)
+            - **ImmortalWrt Commit**: `${{ steps.tag.outputs.commit_hash }}`
+            - **Build Environment**: `${{ steps.tag.outputs.os_info }}`
+            - **Host GCC Version**: `${{ steps.tag.outputs.gcc_version }}`
           files: |
             openwrt/bin/targets/x86/64/*combined*.img.gz
             openwrt/bin/targets/x86/64/sha256sums
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Cleanup Old Releases
-        uses: dev-drprasad/delete-older-releases@v0.3.3
+      # 🚨 精簡版全天候黑盒子
+      - name: Upload Build Logs & Configs
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          keep_latest: 5
-          delete_tags: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: openwrt-build-data-${{ github.run_id }}
+          path: |
+            openwrt/logs/
+            openwrt/diffconfig.txt
+            openwrt/.config
+            openwrt/bin/targets/x86/64/sha256sums
+          retention-days: 7
