@@ -1,4 +1,4 @@
-name: Build ImmWrt v3.38e LTS
+name: Build ImmWrt v3.38f LTS
 on:
   workflow_dispatch:
   schedule:
@@ -70,14 +70,26 @@ jobs:
           # 🎯 引入 --single-branch 節省網路帶寬與空間
           git clone -b v25.12.0-rc2 --single-branch --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
 
-      # 🛡️ 唯一快取：CCache (引入 github.sha 綁定提交)
+      # 📦 原始碼快取：保存 2GB+ 的 dl 目錄，避免每次重新下載
+      - name: Restore DL Cache
+        uses: actions/cache/restore@v4
+        with:
+          path: openwrt/dl
+          key: ${{ runner.os }}-dl-v338f-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-dl-v338f-
+          enableCrossOsArchive: false
+
+      # 🛡️ 編譯快取：CCache (同時捕獲根目錄與 OpenWrt 隱藏目錄)
       - name: Restore CCache
         uses: actions/cache/restore@v4
         with:
-          path: openwrt/.ccache
-          key: ${{ runner.os }}-ccache-v338e-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            openwrt/.ccache
+            openwrt/staging_dir/host/ccache
+          key: ${{ runner.os }}-ccache-v338f-${{ github.sha }}-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-ccache-v338e-
+            ${{ runner.os }}-ccache-v338f-
           enableCrossOsArchive: false
             
       - name: Feeds & Official Sources
@@ -284,13 +296,24 @@ jobs:
           df -h
           df -i
           
+      # 📦 儲存原始碼快取
+      - name: Save DL Cache
+        uses: actions/cache/save@v4
+        if: success()
+        with:
+          path: openwrt/dl
+          key: ${{ runner.os }}-dl-v338f-${{ github.sha }}-${{ github.run_id }}
+          enableCrossOsArchive: false
+
       # 🛡️ 企業級防污染快取 (保存最新進度)
       - name: Save CCache
         uses: actions/cache/save@v4
         if: success()
         with:
-          path: openwrt/.ccache
-          key: ${{ runner.os }}-ccache-v338e-${{ github.sha }}-${{ github.run_id }}
+          path: |
+            openwrt/.ccache
+            openwrt/staging_dir/host/ccache
+          key: ${{ runner.os }}-ccache-v338f-${{ github.sha }}-${{ github.run_id }}
           enableCrossOsArchive: false
 
       - name: Validate Firmware Integrity
@@ -308,7 +331,7 @@ jobs:
         id: tag
         run: |
           set -euo pipefail
-          echo "release_tag=v3.38e-b${{ github.run_number }}-$(date +"%m%d")" >> $GITHUB_OUTPUT
+          echo "release_tag=v3.38f-b${{ github.run_number }}-$(date +"%m%d")" >> $GITHUB_OUTPUT
           cd openwrt
           echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           echo "os_info=$(uname -srm)" >> $GITHUB_OUTPUT
@@ -318,14 +341,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.release_tag }}
-          name: ImmWrt v3.38e LTS (SquashFS) (Build ${{ github.run_number }})
+          name: ImmWrt v3.38f LTS (SquashFS) (Build ${{ github.run_number }})
           body: |
-            ### 🚀 v3.38e 長期支援最終版 (LTS) - 穩定修復
-            - **參數排雷**：移除導致 CCache CLI 崩潰的無效壓縮參數，恢復底層穩定運作。
+            ### 🚀 v3.38f 長期支援最終版 (LTS) - 完美記憶版
+            - **雙重快取陣列**：全面恢復 `dl` 源碼快取，並精準捕獲 OpenWrt 隱藏的 `CCache` 目錄，為未來編譯注入極速記憶！
             - **精準閹割**：物理切斷 EXT4 雙重打包流程，極限釋放 3GB+ 峰值磁碟空間。
             - **供應鏈防禦**：精準剔除失效的 `ShadowsocksR-Libev` 與 `Trojan-Plus`，**保留標準 SS 功能不受影響**。
             - **深度減負優化**：加入 `--single-branch` 與 `TARGZ=n` 設置，精準切斷不必要的代碼樹與備用包。
-            - **快取命中升級**：引入 `github.sha` 綁定機制與向下相容恢復，徹底解決冷啟動 0-hit 問題。
             - **物理雙鎖**：鎖死 `OMP_NUM_THREADS=1` 與 `OPENBLAS_NUM_THREADS=1`，絕對鎮壓任何多核暴走。
             
             ---
