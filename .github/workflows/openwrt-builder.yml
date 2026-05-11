@@ -1,4 +1,4 @@
-name: Build ImmWrt v3.38d LTS
+name: Build ImmWrt v3.38e LTS
 on:
   workflow_dispatch:
   schedule:
@@ -75,9 +75,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: openwrt/.ccache
-          key: ${{ runner.os }}-ccache-v338d-${{ github.sha }}-${{ github.run_id }}
+          key: ${{ runner.os }}-ccache-v338e-${{ github.sha }}-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-ccache-v338d-
+            ${{ runner.os }}-ccache-v338e-
           enableCrossOsArchive: false
             
       - name: Feeds & Official Sources
@@ -241,10 +241,9 @@ jobs:
           
           mkdir -p "$CCACHE_DIR"
           
-          # 🎯 優化 CCache 壓縮等級
+          # 🎯 恢復 CCache 預設穩定壓縮，移除報錯的幻覺參數
           ccache --max-size=2G
           ccache --set-config=compression=true
-          ccache --set-config=compression-level=3
           ccache --set-config=sloppiness=file_macro,time_macros
           
           # 🚀 下載與精準 0-Byte 獵殺陣
@@ -291,7 +290,7 @@ jobs:
         if: success()
         with:
           path: openwrt/.ccache
-          key: ${{ runner.os }}-ccache-v338d-${{ github.sha }}-${{ github.run_id }}
+          key: ${{ runner.os }}-ccache-v338e-${{ github.sha }}-${{ github.run_id }}
           enableCrossOsArchive: false
 
       - name: Validate Firmware Integrity
@@ -309,7 +308,7 @@ jobs:
         id: tag
         run: |
           set -euo pipefail
-          echo "release_tag=v3.38d-b${{ github.run_number }}-$(date +"%m%d")" >> $GITHUB_OUTPUT
+          echo "release_tag=v3.38e-b${{ github.run_number }}-$(date +"%m%d")" >> $GITHUB_OUTPUT
           cd openwrt
           echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
           echo "os_info=$(uname -srm)" >> $GITHUB_OUTPUT
@@ -319,9 +318,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.release_tag }}
-          name: ImmWrt v3.38d LTS (SquashFS) (Build ${{ github.run_number }})
+          name: ImmWrt v3.38e LTS (SquashFS) (Build ${{ github.run_number }})
           body: |
-            ### 🚀 v3.38d 長期支援最終版 (LTS) - 純淨加固
+            ### 🚀 v3.38e 長期支援最終版 (LTS) - 穩定修復
+            - **參數排雷**：移除導致 CCache CLI 崩潰的無效壓縮參數，恢復底層穩定運作。
             - **精準閹割**：物理切斷 EXT4 雙重打包流程，極限釋放 3GB+ 峰值磁碟空間。
             - **供應鏈防禦**：精準剔除失效的 `ShadowsocksR-Libev` 與 `Trojan-Plus`，**保留標準 SS 功能不受影響**。
             - **深度減負優化**：加入 `--single-branch` 與 `TARGZ=n` 設置，精準切斷不必要的代碼樹與備用包。
