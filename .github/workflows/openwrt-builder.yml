@@ -2,7 +2,7 @@ name: Build ImmWrt v3.38f LTS
 on:
   workflow_dispatch:
   schedule:
-    - cron: '26 19 * * 1'
+    - cron: '26 19 * * 1,4'
 
 concurrency:
   group: immwrt-build
@@ -346,28 +346,4 @@ jobs:
             ### 🚀 v3.38f 長期支援最終版 (LTS) - 完美記憶版
             - **雙重快取陣列**：全面恢復 `dl` 源碼快取，並精準捕獲 OpenWrt 隱藏的 `CCache` 目錄，為未來編譯注入極速記憶！
             - **精準閹割**：物理切斷 EXT4 雙重打包流程，極限釋放 3GB+ 峰值磁碟空間。
-            - **供應鏈防禦**：精準剔除失效的 `ShadowsocksR-Libev` 與 `Trojan-Plus`，**保留標準 SS 功能不受影響**。
-            - **深度減負優化**：加入 `--single-branch` 與 `TARGZ=n` 設置，精準切斷不必要的代碼樹與備用包。
-            - **物理雙鎖**：鎖死 `OMP_NUM_THREADS=1` 與 `OPENBLAS_NUM_THREADS=1`，絕對鎮壓任何多核暴走。
-            
-            ---
-            ### 🛡️ Build Provenance (企業級構建指紋)
-            - **ImmortalWrt Commit**: `${{ steps.tag.outputs.commit_hash }}`
-            - **Build Environment**: `${{ steps.tag.outputs.os_info }}`
-            - **Host GCC Version**: `${{ steps.tag.outputs.gcc_version }}`
-          files: |
-            openwrt/bin/targets/x86/64/*combined*.img.gz
-            openwrt/bin/targets/x86/64/sha256sums
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload Build Logs & Configs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: openwrt-build-data-${{ github.run_id }}
-          path: |
-            openwrt/diffconfig.txt
-            openwrt/.config
-            openwrt/bin/targets/x86/64/sha256sums
-          retention-days: 7
+            - **供應鏈防禦**：精準剔除失效的 `Shadow
