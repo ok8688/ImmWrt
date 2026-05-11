@@ -1,3 +1,17 @@
+# =====================================================================
+# 🔒 [SEALED] OFFICIAL GOLDEN MASTER RELEASE 
+# =====================================================================
+# 代號名稱：ImmWrt v3.38f LTS - Golden Master (永動雙擎典藏版)
+# 封版日期：2026年5月 (DSE 考後終極大作)
+# 核心特性：
+#   1. 雙擎保活 (Twin-Engine Keep-alive)：排程設定為 cron: '26 19 * * 1,4'，完美破解 GitHub 7 天快取死亡線，確保 100% 熱啟動。
+#   2. 雙重記憶體 (Dual Cache Matrix)：精準捕獲 2GB+ DL 依賴庫與 OpenWrt 隱藏 CCache。
+#   3. 極限瘦身 (EXT4 Purge)：物理閹割 EXT4 雙重打包，釋放 3GB 峰值空間，永不爆盤。
+#   4. 絕對鎮壓 (Thread Lock)：OMP_NUM_THREADS=1 鎖死底層暴走，防禦並發崩潰。
+#   5. 供應鏈防禦 (Supply Chain Sec)：保留原生 SS，剔除失效的 SSR 與 Trojan-Plus。
+# =====================================================================
+# ＊備註：此版本為 GitHub Public Repo 專屬之白嫖微軟算力終極母盤，嚴禁再修改任何一行邏輯！
+
 name: Build ImmWrt v3.38f LTS
 on:
   workflow_dispatch:
@@ -346,4 +360,28 @@ jobs:
             ### 🚀 v3.38f 長期支援最終版 (LTS) - 完美記憶版
             - **雙重快取陣列**：全面恢復 `dl` 源碼快取，並精準捕獲 OpenWrt 隱藏的 `CCache` 目錄，為未來編譯注入極速記憶！
             - **精準閹割**：物理切斷 EXT4 雙重打包流程，極限釋放 3GB+ 峰值磁碟空間。
-            - **供應鏈防禦**：精準剔除失效的 `Shadow
+            - **供應鏈防禦**：精準剔除失效的 `ShadowsocksR-Libev` 與 `Trojan-Plus`，**保留標準 SS 功能不受影響**。
+            - **深度減負優化**：加入 `--single-branch` 與 `TARGZ=n` 設置，精準切斷不必要的代碼樹與備用包。
+            - **物理雙鎖**：鎖死 `OMP_NUM_THREADS=1` 與 `OPENBLAS_NUM_THREADS=1`，絕對鎮壓任何多核暴走。
+            
+            ---
+            ### 🛡️ Build Provenance (企業級構建指紋)
+            - **ImmortalWrt Commit**: `${{ steps.tag.outputs.commit_hash }}`
+            - **Build Environment**: `${{ steps.tag.outputs.os_info }}`
+            - **Host GCC Version**: `${{ steps.tag.outputs.gcc_version }}`
+          files: |
+            openwrt/bin/targets/x86/64/*combined*.img.gz
+            openwrt/bin/targets/x86/64/sha256sums
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Build Logs & Configs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-build-data-${{ github.run_id }}
+          path: |
+            openwrt/diffconfig.txt
+            openwrt/.config
+            openwrt/bin/targets/x86/64/sha256sums
+          retention-days: 7
