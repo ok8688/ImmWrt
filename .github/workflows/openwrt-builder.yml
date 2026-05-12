@@ -1,14 +1,13 @@
 # =====================================================================
-# 🔒 [SEALED] OFFICIAL SINGULARITY RELEASE (10.0 企業奇異點版)
+# 🔒 [SEALED] OFFICIAL SINGULARITY RELEASE (ImmWrt v4.0 LTS) - HOTFIX
 # =====================================================================
-# 代號名稱：ImmWrt v4.0 LTS - Singularity CI
-# 封版日期：2026年5月 (達成 10/10，跨入 CI/CD 最高殿堂，跨世代升級)
+# 代號名稱：ImmWrt v4.0 LTS - Singularity CI (Hotfix)
 # 核心特性：
-#   1. 模組化 SRE 函數庫：全域注入 retry() 函數，徹底落實 DRY 原則，大幅提升可讀性與維護性。
-#   2. 終極供應鏈鎖死 (SLSA L3)：全面捨棄動態 Tag，使用不可篡改的 Pinned Commit SHA。
-#   3. 基因鎖快取 (Deterministic Cache)：ISO 週數 + Config Hash 雙重隔離防污染 (v40專屬金庫)。
-#   4. 殘影阻斷 & 異常捕獲：!cancelled() 守護金庫，trap EXIT 確保崩潰回收。
-#   5. CI 免死金牌：DEBIAN_FRONTEND=noninteractive 全域靜默。
+#   1. 退守動態標籤：恢復使用 @v4 與 @v2，完美解決 GitHub 官方 SHA 棄用報錯。
+#   2. 模組化 SRE 函數庫：全域注入 retry() 函數。
+#   3. 基因鎖快取：ISO 週數 + Config Hash 雙重隔離防污染 (v40專屬金庫)。
+#   4. 殘影阻斷 & 異常捕獲：!cancelled() 與 trap EXIT。
+#   5. CI 免死金牌：DEBIAN_FRONTEND=noninteractive。
 # =====================================================================
 
 name: Build ImmWrt v4.0 LTS
@@ -33,15 +32,14 @@ jobs:
     timeout-minutes: 240
     
     steps:
-      # 🛡️ 供應鏈偏執狂：鎖定 checkout v4.1.7 的不可篡改 SHA
+      # 🔄 恢復官方 v4 標籤，解決依賴報錯
       - name: Checkout Source
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+        uses: actions/checkout@v4
         
       - name: Generate Cache Variables
         id: var
         run: echo "week=$(date +'%G-%V')" >> $GITHUB_OUTPUT
         
-      # 🛠️ SRE 工具箱模組化：建立全域重試函數，優雅替換冗餘代碼
       - name: Inject SRE Core Utilities
         run: |
           cat << 'EOF' > /tmp/sre_utils.sh
@@ -213,9 +211,9 @@ jobs:
           
           ./scripts/diffconfig.sh > diffconfig.txt
 
-      # 🛡️ 供應鏈偏執狂：鎖定 cache restore v4.0.2 SHA (升級至 v40 金庫)
+      # 🔄 恢復官方 v4 標籤
       - name: Restore DL Cache
-        uses: actions/cache/restore@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9
+        uses: actions/cache/restore@v4
         with:
           path: openwrt/dl
           key: ${{ runner.os }}-dl-v40-${{ steps.var.outputs.week }}-${{ hashFiles('openwrt/.config') }}
@@ -225,7 +223,7 @@ jobs:
           enableCrossOsArchive: false
 
       - name: Restore CCache
-        uses: actions/cache/restore@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9
+        uses: actions/cache/restore@v4
         with:
           path: openwrt/.ccache
           key: ${{ runner.os }}-ccache-v40-${{ steps.var.outputs.week }}-${{ hashFiles('openwrt/.config') }}
@@ -253,7 +251,6 @@ jobs:
           ccache --set-config=compression=true
           ccache --set-config=sloppiness=file_macro,time_macros
           
-          # 🔄 模組化 Retry 優雅呼叫
           retry make download -j4
           
           find dl -type f -size 0 -exec rm -f {} \; || true
@@ -274,9 +271,9 @@ jobs:
           echo "=== 🏆 編譯後 CCache 戰果 ==="
           ccache -s
           
-      # 🛡️ 供應鏈偏執狂：鎖定 cache save v4.0.2 SHA (升級至 v40 金庫)
+      # 🔄 恢復官方 v4 標籤
       - name: Save DL Cache
-        uses: actions/cache/save@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9
+        uses: actions/cache/save@v4
         if: success() && !cancelled()
         with:
           path: openwrt/dl
@@ -284,7 +281,7 @@ jobs:
           enableCrossOsArchive: false
 
       - name: Save CCache
-        uses: actions/cache/save@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9
+        uses: actions/cache/save@v4
         if: success() && !cancelled()
         with:
           path: openwrt/.ccache
@@ -309,16 +306,15 @@ jobs:
           echo "os_info=$(uname -srm)" >> $GITHUB_OUTPUT
           echo "gcc_version=$(gcc --version | head -n1)" >> $GITHUB_OUTPUT
           
-      # 🛡️ 供應鏈偏執狂：鎖定 gh-release v2.0.8 SHA
+      # 🔄 恢復官方 v2 標籤
       - name: Publish to GitHub Releases
-        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.release_tag }}
           name: ImmWrt v4.0 LTS (Singularity CI) (Build ${{ github.run_number }})
           body: |
             ### 🚀 v4.0 生產級奇異點版 (Singularity CI)
             - **SRE 工具箱矩陣**：全域注入 `retry()` 模組，代碼極致優雅 (DRY)，無視網路抖動。
-            - **SLSA 終極防禦**：全面採用不可篡改之 Commit SHA 鎖定供應鏈，防範惡意覆蓋。
             - **基因鎖快取矩陣**：`[ISO 週數] + [Config Hash]` 絕對環境隔離。
             - **中斷捕獲協議**：`trap EXIT` 與 `!cancelled()` 聯動，守護快取金庫絕對純淨。
             - **企業級運行環境**：`DEBIAN_FRONTEND=noninteractive` 消滅交互卡死。
@@ -334,10 +330,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 🛡️ 供應鏈偏執狂：鎖定 upload-artifact v4.4.0 SHA
+      # 🔄 恢復官方 v4 標籤
       - name: Upload Build Logs & Configs
         if: always()
-        uses: actions/upload-artifact@50769540e7f4fa5bdcc4138614610131346f0f5b
+        uses: actions/upload-artifact@v4
         with:
           name: openwrt-build-data-${{ github.run_id }}
           path: |
