@@ -156,6 +156,7 @@ jobs:
             echo "CONFIG_PACKAGE_luci-theme-argon=y"
             echo "CONFIG_PACKAGE_luci-app-argon-config=y"
             echo "CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y"
+            echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y"
             
             echo "CONFIG_PACKAGE_qemu-ga=y"
             echo "CONFIG_PACKAGE_irqbalance=y"
@@ -250,6 +251,7 @@ jobs:
             - **防爆盤矩陣**：引入 Android/Docker 核爆清理，並徹底剔除 `.ccache` 與 `.gocache`，確保編譯空間 100% 充裕，告別 `no space left` 報錯。
             - **極速快取策略**：僅保留高價值的 `dl` 下載源碼快取，配合 `cache-primary-key` 防禦網，實現秒級無衝突保存。
             - **防舊版重生機制**：實體抹除 `feeds` 原生舊版 PassWall 目錄，徹底斬斷供應鏈干擾，確保編譯最新官方源。
+            - **全量中文化覆蓋**：補齊基礎模塊中文包，確保系統後台各級菜單 100% 沉浸式中文體驗。
             - **黃金級掛載點根除**：回歸 v3.38f 經典 `jq` 定點抹除，絕不引發選單崩潰。
           files: |
             openwrt/bin/targets/x86/64/*combined*.img.gz
