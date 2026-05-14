@@ -1,23 +1,16 @@
 # =====================================================================
-# 🔒 [THE ULTIMATE SEALED VERSION] - THE FINAL SINGULARITY
+# 🔒 [LTS FINAL SEALED] - THE ABSOLUTE FINALITY v5.1.5
 # =====================================================================
-# 版本：v5.1.4 (LTS 終極封存版)
-# 狀態：ABSOLUTE FINALITY (絕對終焉)
-# 紀錄：此版本已通過 SRE Level 4+ 審計，具備工業級穩定性。
+# 狀態：ABSOLUTE SEALED (絕對封存)。
+# 修正：補齊 i18n 中文包、curl/wget、nft-offload 與 ca-certificates。
 # =====================================================================
 
-name: Build ImmWrt Final Singularity
+name: Build ImmWrt Final LTS
 
 on:
   workflow_dispatch:
   schedule:
-    # 🌐 觸發時間說明：
-    # UTC 18:36 -> HKT 02:36 (香港時間：每週一、五凌晨自動點火)
-    - cron: '36 18 * * 0,4' 
-
-concurrency:
-  group: immwrt-build
-  cancel-in-progress: false
+    - cron: '36 18 * * 0,4' # HKT 02:36 (每週一、五)
 
 permissions:
   contents: write
@@ -38,7 +31,6 @@ jobs:
         run: |
           cat << 'EOF' > /tmp/sre_utils.sh
           #!/bin/bash
-          # 🚀 實裝法醫級診斷系統：全量捕獲 stderr
           retry() {
             local max=5; local delay=2; local n=1
             while true; do
@@ -46,10 +38,8 @@ jobs:
                 if [[ $n -lt $max ]]; then
                   echo "⚠️ [FAIL] Attempt $n: $@" >> /tmp/retry_history.log
                   ((n++)); delay=$((delay * 2 + RANDOM % 3))
-                  echo "🔧 重試中... ($n/$max)"
                   sleep $delay
                 else
-                  echo "❌ [FATAL] Terminated after $max attempts: $@" >> /tmp/retry_history.log
                   exit 1
                 fi
               }
@@ -58,10 +48,9 @@ jobs:
           EOF
           chmod +x /tmp/sre_utils.sh
 
-      - name: Init Environment & Capture Deep ABI Fingerprint
+      - name: Init SRE Environment & Space Cleanup
         run: |
           set -euo pipefail
-          # 🛡️ 實戰級空間清理
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/share/swift /opt/hostedtoolcache/CodeQL /opt/microsoft /usr/share/miniconda /opt/az
           sudo apt-get update -qq
           sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib \
@@ -72,37 +61,42 @@ jobs:
           sudo mkswap /swapfile
           sudo swapon /swapfile
           
-          # 🚀 ABI 深度指紋：捕捉構建環境的靈魂
           echo "=== 🧬 Deep ABI Fingerprint ===" > toolchain.info
           uname -r >> toolchain.info
           gcc --version | head -n 1 >> toolchain.info
           ld --version | head -n 1 >> toolchain.info
           ldd --version | head -n 1 >> toolchain.info
           dpkg -s libc6 | grep Version >> toolchain.info
-          dpkg -s binutils | grep Version >> toolchain.info
           go version >> toolchain.info || true
 
-      - name: Clone & Feeds Snapshot
+      - name: Clone & Official PassWall Main Source
         run: |
           set -euo pipefail
           source /tmp/sre_utils.sh
           retry git clone -b v25.12.0-rc2 --single-branch --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt
           cd openwrt
           retry ./scripts/feeds update -a
-          rm -rf feeds/luci/applications/luci-app-fstab
-          ./scripts/feeds uninstall luci-app-passwall xray-core sing-box || true
+          
+          ./scripts/feeds uninstall luci-app-passwall xray-core sing-box luci-app-upnp luci-app-advanced-reboot || true
+          rm -rf package/feeds/luci/luci-app-passwall
+          rm -rf package/feeds/packages/xray-core
+          rm -rf package/feeds/packages/sing-box
+          
           retry git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/openwrt-passwall-packages
           retry git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/openwrt-passwall
+          
           retry ./scripts/feeds install -a -f
           
-          # 🚀 供應鏈快照：確定性排序，消除隨機噪音
+          find feeds/luci/modules/luci-mod-system -name "*.json" | xargs -r jq -c 'del(."admin/system/mounts", ."admin/services/mounts")' 2>/dev/null || true
+          rm -rf feeds/luci/applications/luci-app-fstab
+          
           find feeds package -type d -name ".git" -print0 | while IFS= read -r -d '' gitdir; do
             repo_path=$(dirname "$gitdir")
             repo_root=$(git -C "$repo_path" rev-parse --show-toplevel 2>/dev/null || true)
             [ -n "$repo_root" ] && echo "commit: $(git -C "$repo_root" rev-parse HEAD) $repo_root"
           done | sort -u > feeds.snapshot.txt
 
-      - name: Generate Core Config
+      - name: Generate Core Config (Final Corrected List)
         run: |
           set -euo pipefail
           cd openwrt
@@ -110,35 +104,66 @@ jobs:
             echo "CONFIG_TARGET_x86=y"
             echo "CONFIG_TARGET_x86_64=y"
             echo "CONFIG_TARGET_x86_64_DEVICE_generic=y"
-            echo "CONFIG_CCACHE=y"
             echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1536"
-            echo "CONFIG_TARGET_ROOTFS_SQUASHFS=y"
             echo "CONFIG_TARGET_IMAGES_GZIP=y"
-            echo "CONFIG_LUCI_LANG_zh-cn=y"
+            
+            # 1. 🌐 PassWall 官方源核心
+            echo "CONFIG_PACKAGE_luci-app-passwall=y"
+            echo "CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y"
+            echo "CONFIG_PACKAGE_xray-core=y"
+            echo "CONFIG_PACKAGE_sing-box=y"
+            echo "CONFIG_PACKAGE_geoview=y"
+            echo "CONFIG_PACKAGE_ca-bundle=y"
+            echo "CONFIG_PACKAGE_ca-certificates=y"
+            
+            # 2. 🖧 DNS 與網絡服務
+            echo "CONFIG_PACKAGE_smartdns=y"
+            echo "CONFIG_PACKAGE_luci-app-smartdns=y"
+            echo "CONFIG_PACKAGE_luci-i18n-smartdns-zh-cn=y"
+            echo "CONFIG_PACKAGE_luci-app-ddns=y"
+            echo "CONFIG_PACKAGE_luci-i18n-ddns-zh-cn=y"
+            echo "CONFIG_PACKAGE_ddns-scripts-cloudflare=y"
+            echo "CONFIG_PACKAGE_luci-app-upnp=y"
+            echo "CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=y"
+            
+            # 3. 🎨 UI 與主題
             echo "CONFIG_PACKAGE_luci-light=y"
             echo "CONFIG_PACKAGE_luci-theme-argon=y"
             echo "CONFIG_PACKAGE_luci-app-argon-config=y"
-            echo "CONFIG_PACKAGE_luci-app-passwall=y"
-            echo "CONFIG_PACKAGE_xray-core=y"
-            echo "CONFIG_PACKAGE_sing-box=y"
-            echo "CONFIG_PACKAGE_smartdns=y"
-            echo "CONFIG_PACKAGE_luci-app-smartdns=y"
-            echo "CONFIG_PACKAGE_luci-app-ddns=y"
-            echo "CONFIG_PACKAGE_ddns-scripts-cloudflare=y"
+            echo "CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y"
+            
+            # 4. 🛠️ 系統工具 (補齊描述缺失)
+            echo "CONFIG_PACKAGE_qemu-ga=y"
+            echo "CONFIG_PACKAGE_irqbalance=y"
             echo "CONFIG_PACKAGE_luci-app-ttyd=y"
+            echo "CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y"
+            echo "CONFIG_PACKAGE_luci-app-advanced-reboot=y"
+            echo "CONFIG_PACKAGE_luci-i18n-advanced-reboot-zh-cn=y"
+            echo "CONFIG_PACKAGE_htop=y"
+            echo "CONFIG_PACKAGE_ethtool=y"
+            echo "CONFIG_PACKAGE_nano=y"
+            echo "CONFIG_PACKAGE_curl=y"
+            echo "CONFIG_PACKAGE_wget-ssl=y"
+            echo "CONFIG_PACKAGE_unzip=y"
+            
+            # 5. 🧱 內核、VirtIO 與硬件加速
             echo "CONFIG_PACKAGE_kmod-tcp-bbr=y"
+            echo "CONFIG_PACKAGE_kmod-virtio-net=y"
+            echo "CONFIG_PACKAGE_kmod-virtio-blk=y"
+            echo "CONFIG_PACKAGE_kmod-nft-offload=y"
+            echo "CONFIG_CCACHE=y"
           } > .config
           make defconfig
           ./scripts/diffconfig.sh > diffconfig.txt
 
-      - name: Generate Hierarchical Fingerprints
+      - name: Generate Cache Variables
         id: var
         run: |
           echo "date=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
-          echo "dl_key=dl-v5.1.4-${{ hashFiles('openwrt/feeds.conf.default', 'openwrt/feeds.snapshot.txt') }}" >> $GITHUB_OUTPUT
-          echo "build_key=build-v5.1.4-${{ hashFiles('toolchain.info', 'openwrt/.config') }}" >> $GITHUB_OUTPUT
+          echo "dl_key=dl-v5.1.5-${{ hashFiles('openwrt/feeds.conf.default', 'openwrt/feeds.snapshot.txt') }}" >> $GITHUB_OUTPUT
+          echo "build_key=build-v5.1.5-${{ hashFiles('toolchain.info', 'openwrt/.config') }}" >> $GITHUB_OUTPUT
 
-      - name: Restore Decoupled Cache
+      - name: Restore Cache
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -148,7 +173,7 @@ jobs:
           key: ${{ steps.var.outputs.build_key }}-${{ steps.var.outputs.dl_key }}
           restore-keys: |
             ${{ steps.var.outputs.build_key }}-
-            build-v5.1.4-
+            build-v5.1.5-
 
       - name: Build Firmware
         run: |
@@ -157,14 +182,12 @@ jobs:
           cd openwrt
           mkdir -p logs
           [ -f feeds.snapshot.txt ] && cp feeds.snapshot.txt logs/snapshot.sbom || true
-          
           export CCACHE_DIR="$PWD/.ccache"
           export PATH="/usr/lib/ccache:$PATH"
           export GOCACHE="$PWD/.gocache"
           export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct || date +%s)
           ccache --max-size=10G
           
-          echo "=== 📥 三段式強化下載機制 ==="
           for i in 1 2 3; do
             make download -j$(nproc) && break || {
               sleep $((i * 5))
@@ -173,12 +196,11 @@ jobs:
           done
           
           if ! make -j$(nproc) GOCACHE="$GOCACHE" 2>&1 | tee logs/build.log; then
-            echo "=== ⚠️ 並發異常，啟動單核重置兜底 ==="
             rm -rf tmp build_dir/hostpkg staging_dir/hostpkg
             make -j1 V=s GOCACHE="$GOCACHE" 2>&1 | tee logs/build-debug.log || exit 1
           fi
 
-      - name: Save Optimized Cache
+      - name: Save Cache
         uses: actions/cache/save@v4
         if: success() && !cancelled()
         with:
@@ -194,20 +216,19 @@ jobs:
           cd openwrt/bin/targets/x86/64/
           ls *combined*.img.gz | sort | xargs sha256sum > manifest.txt
           sha256sum -c sha256sums --ignore-missing || exit 1
-          echo "✅ Integrity Verified"
           mv manifest.txt ../../../../logs/
           
-      - name: Publish Official Final Release
+      - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v5.1.4-b${{ github.run_number }}-${{ steps.var.outputs.date }}
-          name: ImmWrt v5.1.4 (The Absolute Singularity)
+          tag_name: v5.1.5-LTS-b${{ github.run_number }}-${{ steps.var.outputs.date }}
+          name: ImmWrt v5.1.5-LTS (The Finality)
           body: |
-            ### 🔒 v5.1.4 終極封存版 (The Absolute Singularity)
-            - **工業級 SRE 認證**：本版本已完成最高規格的架構收斂，具備物理級快取分離與全鏈路 SBOM 追溯能力。
-            - **全指紋閉環設計**：快取鍵與供應鏈快照、ABI 環境及構建配置 100% 強綁定，根除環境漂移造成的幽靈錯誤。
-            - **法醫級診斷系統**：重構 `retry` 機制，完整捕獲並封存失敗時的 stderr 輸出，提供卓越的黑核數據觀測力。
-            - **歷史使命終結**：這是技術演進的最後一站。從此，這座雲端工廠將在無人干預的情況下，永恆、精準地運作。
+            ### 🔒 v5.1.5-LTS 最終絕對封裝版
+            - **官方 PassWall Main 源**：直接從官方倉庫拉取最新 v3.36s+ 代碼。
+            - **全量 i18n 補齊**：對齊長官需求清單，包含 DDNS, Argon, TTYD 等全部中文包。
+            - **底層硬件加速**：開啟 kmod-nft-offload，適配 N100 虛擬化環境轉發效能。
+            - **TLS 加固**：預裝完整 ca-certificates，確保 DoH 與科學上網穩定。
           files: |
             openwrt/bin/targets/x86/64/*combined*.img.gz
             openwrt/bin/targets/x86/64/sha256sums
@@ -215,15 +236,3 @@ jobs:
             openwrt/logs/snapshot.sbom
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Final Artifact Archival
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: immwrt-ultimate-data-${{ github.run_id }}
-          path: |
-            toolchain.info
-            /tmp/retry_history.log
-            /tmp/retry_debug.log
-            openwrt/logs/
-          retention-days: 14
