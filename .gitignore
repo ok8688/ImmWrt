@@ -1,6 +1,4 @@
-# =========================
-# Prerequisites (C/C++)
-# =========================
+# Prerequisites
 *.d
 
 # Compiled Object files
@@ -25,6 +23,7 @@
 *.dll
 *.so.*
 
+
 # Fortran module files
 *.mod
 *.smod
@@ -40,12 +39,12 @@
 *.out
 *.app
 
-# =========================
-# Build directories (CMake / general)
-# =========================
+# Build directories
 build/
 Build/
 build-*/
+
+# CMake generated files
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
@@ -53,9 +52,7 @@ Makefile
 install_manifest.txt
 compile_commands.json
 
-# =========================
 # Temporary files
-# =========================
 *.tmp
 *.log
 *.bak
@@ -64,34 +61,9 @@ compile_commands.json
 # vcpkg
 vcpkg_installed/
 
+# debug information files
+*.dwo
+
 # test output & cache
 Testing/
-
-# =========================
-# OpenWrt CI extra ignore
-# =========================
-
-# OpenWrt core build dirs
-dl/
-build_dir/
-staging_dir/
-tmp/
 .cache/
-logs/
-
-# =========================
-# firmware outputs
-# =========================
-*.bin
-*.img
-*.img.*
-*.img.gz
-*.ipk
-*.apk
-
-# =========================
-# OpenWrt build artifacts
-# =========================
-*.buildinfo
-*.manifest
-**/sha256sums
