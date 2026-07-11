@@ -1,9 +1,9 @@
 # =====================================================================
-# ⚠️ [BLEEDING EDGE] - ImmWrt SNAPSHOT (開發嘗鮮版 - 完整歷史 + 全局中文)
+# ⚠️ [BLEEDING EDGE] - ImmWrt SNAPSHOT (開發嘗鮮版 - 完整歷史 + 強制中文)
 # =====================================================================
 # 狀態：基於 7.0 沙皇級物理空間強化基建，解鎖主線 (master) 狂暴模式。
 # 審核：解鎖完整 git 歷史拉取，確保 LuCI 後台精準顯示 rXXXXX 版本號。
-# 修復：強制掛載 CONFIG_LUCI_LANG_zh_cn=y，擊碎 master 分支的英文預設回滾。
+# 修復：注入 uci-defaults 第一開機腳本，物理鎖死預設語言為中文 (zh_cn)。
 # =====================================================================
 
 name: Build ImmWrt SNAPSHOT
@@ -122,9 +122,8 @@ jobs:
         run: |
           set -euo pipefail
           source /tmp/sre_utils.sh
-          # 🚀 [核心切換] 完整拉取 master 分支 (解鎖精準 rXXXXX 版本號)
-          retry git clone -b master \
-            https://github.com/immortalwrt/immortalwrt.git openwrt
+          # 🚀 [核心切換] 完全依照你的指定：拉取 master 分支 (解鎖精準 rXXXXX 版本號)
+          retry git clone -b master https://github.com/immortalwrt/immortalwrt.git openwrt
           cd openwrt
           retry ./scripts/feeds update -a
           
@@ -210,17 +209,31 @@ jobs:
               echo "commit: $(git -C "$repo_root" rev-parse HEAD) $repo_root"
           done | sort -u > feeds.snapshot.txt
           
-      - name: Generate Core Config (v3.36s List)
+      - name: Generate Core Config & Force Language
         run: |
           set -euo pipefail
           cd openwrt
+          
+          # ==========================================================
+          # 🇨🇳 注入第一開機腳本：物理鎖死預設介面為中文 (解決 master 分支異常)
+          # ==========================================================
+          mkdir -p files/etc/uci-defaults
+          cat << 'EOF' > files/etc/uci-defaults/99-force-language
+          #!/bin/sh
+          uci -q batch << EOI
+          set luci.main.lang='zh_cn'
+          commit luci
+          EOI
+          exit 0
+          EOF
+          chmod +x files/etc/uci-defaults/99-force-language
+          
           {
             echo "CONFIG_TARGET_x86=y"
             echo "CONFIG_TARGET_x86_64=y"
             echo "CONFIG_TARGET_x86_64_DEVICE_generic=y"
             echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1536"
             echo "CONFIG_TARGET_IMAGES_GZIP=y"
-            echo "CONFIG_LUCI_LANG_zh_cn=y"  # 👈 新增：強制全局中文環境開關
             echo "CONFIG_PACKAGE_luci-app-passwall=y"
             echo "CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y"
             echo "CONFIG_PACKAGE_xray-core=y"
@@ -347,8 +360,8 @@ jobs:
           name: ImmWrt SNAPSHOT (Bleeding Edge)
           body: |
             ### ⚠️ ImmWrt SNAPSHOT (開發嘗鮮版)
-            - **源碼主線**：已全面切換至 ImmortalWrt `master` 分支 (解鎖完整 git 歷史拉取，後台精準顯示 rXXXXX 版本號)。
-            - **語言預設修復**：強制掛載 `CONFIG_LUCI_LANG_zh_cn=y`，擊碎 master 分支的英文預設回滾。
+            - **源碼主線**：已依照要求精準切換至 `git clone -b master https://github.com/immortalwrt/immortalwrt.git openwrt`，解鎖完整 rXXXXX 版本號。
+            - **語言預設修復 (終極版)**：注入 `uci-defaults` 腳本，在路由器首次開機時強行寫入底層設定庫，徹底鎖死中文介面，無視上游原始碼異常。
             - **沙皇防禦繼承**：完整繼承 v7.0.0-LTS 的極限空間清理協議與 SRE 防禦雷達。
             - **潛在風險聲明**：此版本追蹤最新提交代碼，隨時可能包含未修復的上游 Bug。若發生編譯失敗且雷達顯示空間充足，99% 為上游源碼斷裂，請等待上游修復。
           files: |
