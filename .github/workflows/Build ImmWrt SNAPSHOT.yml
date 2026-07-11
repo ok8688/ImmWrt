@@ -1,9 +1,9 @@
 # =====================================================================
-# ⚠️ [BLEEDING EDGE] - ImmWrt SNAPSHOT (開發嘗鮮版 - 完整歷史 + 強制中文)
+# ⚠️ [BLEEDING EDGE] - ImmWrt SNAPSHOT (開發嘗鮮版 - 終極中文架構優化)
 # =====================================================================
 # 狀態：基於 7.0 沙皇級物理空間強化基建，解鎖主線 (master) 狂暴模式。
 # 審核：解鎖完整 git 歷史拉取，確保 LuCI 後台精準顯示 rXXXXX 版本號。
-# 修復：注入 uci-defaults 第一開機腳本，物理鎖死預設語言為中文 (zh_cn)。
+# 優化：採納專家審核意見，物理級直接注入實體 luci 設定檔，完美相容新版 core 節點。
 # =====================================================================
 
 name: Build ImmWrt SNAPSHOT
@@ -122,7 +122,7 @@ jobs:
         run: |
           set -euo pipefail
           source /tmp/sre_utils.sh
-          # 🚀 [核心切換] 完全依照你的指定：拉取 master 分支 (解鎖精準 rXXXXX 版本號)
+          # 🚀 拉取 master 分支 (解鎖精準 rXXXXX 版本號)
           retry git clone -b master https://github.com/immortalwrt/immortalwrt.git openwrt
           cd openwrt
           retry ./scripts/feeds update -a
@@ -142,7 +142,7 @@ jobs:
           rm -rf package/feeds/packages/xray-core
           rm -rf package/feeds/packages/sing-box
           
-          # 🚀 拉取官方最新 PassWall
+          # 🚀 拉取官方最新 PassWall (保留高效 depth=1)
           retry git clone --depth=1 \
             https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git \
             package/openwrt-passwall-packages
@@ -209,24 +209,25 @@ jobs:
               echo "commit: $(git -C "$repo_root" rev-parse HEAD) $repo_root"
           done | sort -u > feeds.snapshot.txt
           
-      - name: Generate Core Config & Force Language
+      - name: Generate Core Config & Solid Language Setup
         run: |
           set -euo pipefail
           cd openwrt
           
           # ==========================================================
-          # 🇨🇳 注入第一開機腳本：物理鎖死預設介面為中文 (解決 master 分支異常)
+          # 🇨🇳 採納專家建議：直接注入實體設定檔，完美相容新舊結構，開局即中文
           # ==========================================================
-          mkdir -p files/etc/uci-defaults
-          cat << 'EOF' > files/etc/uci-defaults/99-force-language
-          #!/bin/sh
-          uci -q batch << EOI
-          set luci.main.lang='zh_cn'
-          commit luci
-          EOI
-          exit 0
+          mkdir -p files/etc/config
+          cat << 'EOF' > files/etc/config/luci
+          config main core
+              option lang 'zh_cn'
+          
+          config core
+              option lang 'zh_cn'
+          
+          config languages
+              option zh_cn '中文 (Chinese)'
           EOF
-          chmod +x files/etc/uci-defaults/99-force-language
           
           {
             echo "CONFIG_TARGET_x86=y"
@@ -275,13 +276,22 @@ jobs:
             echo "# CONFIG_CCACHE is not set"
           } > .config
           make defconfig
+          
+          # 🔍 採納專家建議：強效防護，驗證中文包是否被上游意外踢除
+          if grep -q "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" .config; then
+              echo "✅ SRE Check: 中文語言底座確認鎖定。"
+          else
+              echo "⚠️ SRE Warning: 中文語言底座未被選中，強行重新追加！"
+              echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
+              make defconfig
+          fi
+          
           ./scripts/diffconfig.sh > diffconfig.txt
           
       - name: Generate Cache Variables
         id: var
         run: |
           echo "date=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
-          # 🛡️ 隔離快照綁定：使用 snapshot 專屬鍵值，避免污染 LTS 母版快取
           echo "dl_key=dl-snapshot-${{ hashFiles('openwrt/feeds.conf.default', 'openwrt/feeds.snapshot.txt') }}" >> $GITHUB_OUTPUT
           
       - name: Restore Cache
@@ -360,10 +370,10 @@ jobs:
           name: ImmWrt SNAPSHOT (Bleeding Edge)
           body: |
             ### ⚠️ ImmWrt SNAPSHOT (開發嘗鮮版)
-            - **源碼主線**：已依照要求精準切換至 `git clone -b master https://github.com/immortalwrt/immortalwrt.git openwrt`，解鎖完整 rXXXXX 版本號。
-            - **語言預設修復 (終極版)**：注入 `uci-defaults` 腳本，在路由器首次開機時強行寫入底層設定庫，徹底鎖死中文介面，無視上游原始碼異常。
+            - **源碼主線**：已全面切換至 `master` 分支，解鎖完整 Git 歷史拉取。
+            - **大師級中文修復**：棄用 uci-defaults，改為物理直接注入 `files/etc/config/luci` 實體設定檔，融合新舊 core/main 命名空間，達成開機即中文的最高相容性。
+            - **防退回校驗**：編譯階段自動啟動 grep 防呆檢測，預防上游隨機踢除語言底座。
             - **沙皇防禦繼承**：完整繼承 v7.0.0-LTS 的極限空間清理協議與 SRE 防禦雷達。
-            - **潛在風險聲明**：此版本追蹤最新提交代碼，隨時可能包含未修復的上游 Bug。若發生編譯失敗且雷達顯示空間充足，99% 為上游源碼斷裂，請等待上游修復。
           files: |
             openwrt/bin/targets/x86/64/*combined*.img.gz
             openwrt/bin/targets/x86/64/sha256sums
