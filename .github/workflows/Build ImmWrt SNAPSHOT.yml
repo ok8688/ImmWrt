@@ -1,10 +1,9 @@
 # =====================================================================
-# ⚠️ [BLEEDING EDGE] - ImmWrt SNAPSHOT (開發嘗鮮版 - 專家聯名終極完全體)
+# ⚠️ [BLEEDING EDGE] - ImmWrt SNAPSHOT (開發嘗鮮版 - 終極深海聲納陣列)
 # =====================================================================
 # 狀態：基於 7.0 沙皇級物理空間強化基建，解鎖主線 (master) 狂暴模式。
-# 審核：解鎖完整 git 歷史拉取，確保 LuCI 後台精準顯示 rXXXXX 版本號。
-# 核心：升級為 CONFIG_PACKAGE_luci=y，徹底解決 master 分支 luci-light 依賴斷裂導致 theme=null 的 Bug。
-# 修復：淨化 uci-defaults 語法，移除非標準節點；升級雙重主題+語言遙測雷達。
+# 核心：維持 CONFIG_PACKAGE_luci=y 解決 theme=null，回退標準 zh-cn 語言包。
+# 偵察：全量掛載大師級 SRE 聲納，包含 Config.in 穿透、diffconfig 曝露與 APK 世代檢測。
 # =====================================================================
 
 name: Build ImmWrt SNAPSHOT
@@ -210,37 +209,38 @@ jobs:
               echo "commit: $(git -C "$repo_root" rev-parse HEAD) $repo_root"
           done | sort -u > feeds.snapshot.txt
           
-      - name: Generate Core Config & Solid Language Setup
+      - name: Generate Core Config & SRE Diagnostic Probes
         run: |
           set -euo pipefail
           cd openwrt
           
-          # ==========================================================
-          # 🇨🇳 採納大師建議：採用最相容之 uci-defaults 溫和補丁邏輯
-          # ==========================================================
+          # 🇨🇳 溫和注入法：強制底層讀取 Auto 語系
           mkdir -p files/etc/uci-defaults
           cat << 'EOF' > files/etc/uci-defaults/99-force-language
           #!/bin/sh
-          # 直接對現有節點進行精準微調，不建立任何非標準 Section
-          uci -q set luci.main.lang='zh_cn'
-          uci -q set luci.core.lang='zh_cn'
+          uci -q set luci.main.lang='auto'
           uci -q commit luci
           exit 0
           EOF
           chmod +x files/etc/uci-defaults/99-force-language
           
+          # ==========================================================
+          # ⚙️ 核心套件清單 (回退至最標準的 zh-cn 陣列)
+          # ==========================================================
           {
             echo "CONFIG_TARGET_x86=y"
             echo "CONFIG_TARGET_x86_64=y"
             echo "CONFIG_TARGET_x86_64_DEVICE_generic=y"
             echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1536"
             echo "CONFIG_TARGET_IMAGES_GZIP=y"
-            echo "CONFIG_PACKAGE_luci=y"  # 👈 採納大師建議：從 luci-light 升級為完整版 luci，強行綁死核心依賴鏈，摧毀 theme=null 錯誤
+            echo "CONFIG_PACKAGE_luci=y"
+            
             echo "CONFIG_PACKAGE_luci-app-passwall=y"
             echo "CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y"
             echo "CONFIG_PACKAGE_xray-core=y"
             echo "CONFIG_PACKAGE_sing-box=y"
             echo "CONFIG_PACKAGE_geoview=y"
+            
             echo "CONFIG_PACKAGE_ca-bundle=y"
             echo "CONFIG_PACKAGE_ca-certificates=y"
             echo "CONFIG_PACKAGE_smartdns=y"
@@ -251,16 +251,19 @@ jobs:
             echo "CONFIG_PACKAGE_ddns-scripts-cloudflare=y"
             echo "CONFIG_PACKAGE_luci-app-upnp=y"
             echo "CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=y"
+            
             echo "CONFIG_PACKAGE_luci-theme-argon=y"
             echo "CONFIG_PACKAGE_luci-app-argon-config=y"
             echo "CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y"
             echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y"
+            
             echo "CONFIG_PACKAGE_qemu-ga=y"
             echo "CONFIG_PACKAGE_irqbalance=y"
             echo "CONFIG_PACKAGE_luci-app-ttyd=y"
             echo "CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y"
             echo "CONFIG_PACKAGE_luci-app-advanced-reboot=y"
             echo "CONFIG_PACKAGE_luci-i18n-advanced-reboot-zh-cn=y"
+            
             echo "CONFIG_PACKAGE_htop=y"
             echo "CONFIG_PACKAGE_ethtool=y"
             echo "CONFIG_PACKAGE_nano=y"
@@ -277,16 +280,29 @@ jobs:
           } > .config
           make defconfig
           
-          # 🔍 升級為最嚴格的行首行尾正則精準全匹配夾擊
-          if grep -q '^CONFIG_PACKAGE_luci-i18n-base-zh-cn=y$' .config; then
-              echo "✅ SRE Check: 中文語言底座確認鎖定。"
-          else
-              echo "⚠️ SRE Warning: 中文語言底座未被選中，強行重新追加！"
-              echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
-              make defconfig
-          fi
+          # ==========================================================
+          # 🚨 SRE 深海聲納偵察系統 (大師指定終極探測網) 🚨
+          # ==========================================================
+          echo "========== 🕵️‍♂️ SRE DIAGNOSTIC: LuCI Core =========="
+          grep "^CONFIG_PACKAGE_luci" .config || true
+          
+          echo "========== 🕵️‍♂️ SRE DIAGNOSTIC: LuCI Language =========="
+          grep "luci-i18n" .config || true
+          
+          echo "========== 🕵️‍♂️ SRE DIAGNOSTIC: Config.in Search =========="
+          grep -R "luci-i18n-base" feeds package 2>/dev/null | head -n 50 || true
+          
+          echo "========== 🕵️‍♂️ SRE DIAGNOSTIC: zh-cn / zh-hans Source Search =========="
+          grep -ri "zh-cn" feeds package 2>/dev/null | head -n 30 || true
+          grep -ri "zh-hans" feeds package 2>/dev/null | head -n 30 || true
+          
+          echo "========== 🕵️‍♂️ SRE DIAGNOSTIC: Available i18n packages in source =========="
+          find feeds package -name "luci-i18n*" | sort | head -n 50 || true
           
           ./scripts/diffconfig.sh > diffconfig.txt
+          echo "========== 🕵️‍♂️ SRE DIAGNOSTIC: diffconfig =========="
+          cat diffconfig.txt || true
+          echo "==========================================================================="
           
       - name: Generate Cache Variables
         id: var
@@ -360,24 +376,26 @@ jobs:
           cd openwrt
           
           # =========================================================================
-          # 📡 採納大師建議：掛載「雙重產物驅動型遙測雷達」（語言包 + 實體主題包）
+          # 📡 產物遙測 (加入 APK 世代檢測與全字元模糊攔截)
           # =========================================================================
-          echo "🔍 SRE 正在執行產物級語言指紋觀測..."
-          ZH_CN_PACKAGES=$(find bin/ \( -name "*zh-cn*.ipk" -o -name "*zh_Hans*.ipk" \) -type f || true)
+          echo "========== 🕵️‍♂️ SRE DIAGNOSTIC: APK Migration Check =========="
+          find bin/ -name "*.apk" -type f | head -n 30 || true
+          
+          echo "========== 🕵️‍♂️ SRE DIAGNOSTIC: Artifact Search (*zh*) =========="
+          ZH_CN_PACKAGES=$(find bin/ -iname "*zh*" -type f || true)
           if [ -n "$ZH_CN_PACKAGES" ]; then
-              echo "✅ 實體中文語言包確認產出。"
+              echo "✅ 實體中文語言包確認產出 (無視副檔名)："
+              echo "$ZH_CN_PACKAGES"
           else
-              echo "::warning title=SRE Alert (Language Drift)::未在 bin 目錄檢測到獨立中文 .ipk 包。"
+              echo "::warning title=SRE Alert (Language Drift)::未在 bin 目錄檢測到任何包含 zh 的產物，等待分析源碼探測日誌。"
           fi
           
           echo "🔍 SRE 正在執行產物級主題指紋觀測..."
-          ARGON_PACKAGES=$(find bin/ -name "*theme-argon*.ipk" -type f || true)
+          ARGON_PACKAGES=$(find bin/ -name "*theme-argon*" -type f || true)
           if [ -n "$ARGON_PACKAGES" ]; then
-              echo "✅ 實體 Argon 主題包確認產出，底層依賴鏈極度健康！"
-              echo "$ARGON_PACKAGES"
+              echo "✅ 實體 Argon 主題包確認產出！"
           else
-              # ⚠️ 發送警告，防範上游再次斷裂
-              echo "::warning title=SRE Alert (Theme Missing)::未在 bin 目錄檢測到實體 Argon 主題 .ipk 檔案！這意味著主題包可能未被成功編譯，請高度警惕 theme=null 錯誤！"
+              echo "::warning title=SRE Alert (Theme Missing)::未在 bin 目錄檢測到實體 Argon 主題檔案！"
           fi
           
           cd bin/targets/x86/64/
@@ -390,13 +408,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: SNAPSHOT-b${{ github.run_number }}-${{ steps.var.outputs.date }}
-          name: ImmWrt SNAPSHOT (Bleeding Edge)
+          name: ImmWrt SNAPSHOT (Bleeding Edge - Ultimate Recon)
           body: |
-            ### ⚠️ ImmWrt SNAPSHOT (開發嘗鮮版)
-            - **源碼主線**：全面切換至 `master` 分支，解鎖完整 Git 歷史拉取。
-            - **重磅修復 (Theme=null)**：採納專家最高方針，將編譯核心由 `luci-light` 升級為完整版 `luci`，強行修復 master 分支因依賴變更導致主題丟失的重大 Bug。
-            - **雙重遙測雷達**：同時監控中文包與 Argon 主題包的實體產物狀態，提供最強大的相容性與警報觀測。
-            - **沙皇防禦繼承**：完整繼承 v7.0.0-LTS 的極限空間清理協議與 SRE 防禦雷達。
+            ### ⚠️ ImmWrt SNAPSHOT (開發嘗鮮版 - 終極偵察任務)
+            - **源碼主線**：全面切換至 `master` 分支。
+            - **SRE 深海聲納陣列**：本版本已佈署全域 `Config.in` 穿透掃描、`diffconfig` 曝露機制，以及對抗上游框架變革的 **APK 遷移檢測雷達**。
+            - **任務指示**：韌體編譯完成後，請第一時間解析 GitHub Actions 運行日誌中的 `🕵️‍♂️ SRE DIAGNOSTIC` 區塊，獲取底層依賴漂移的絕對真相！
           files: |
             openwrt/bin/targets/x86/64/*combined*.img.gz
             openwrt/bin/targets/x86/64/sha256sums
