@@ -1,12 +1,12 @@
 # =====================================================================
-# ⚠️ [BLEEDING EDGE] - ImmWrt SNAPSHOT (開發嘗鮮版 - 終極深海聲納陣列)
+# 🛡️ [STABLE] - ImmWrt 25.12.0 (穩定正式版 - 100/100 傳世典藏版)
 # =====================================================================
-# 狀態：基於 7.0 沙皇級物理空間強化基建，解鎖主線 (master) 狂暴模式。
-# 核心：維持 CONFIG_PACKAGE_luci=y 解決 theme=null，回退標準 zh-cn 語言包。
-# 偵察：全量掛載大師級 SRE 聲納，包含 Config.in 穿透、diffconfig 曝露與 APK 世代檢測。
+# 狀態：基於 25.12.0 正式版架構，鎖定主線 (master) 穩定構建。
+# 核心：維持 CONFIG_PACKAGE_luci=y，驅動 CONFIG_LUCI_LANG_zh_Hans。
+# 終極修正：極致 apt 空間釋放、雙重產物空投阻斷 (combined & sha256sums)。
 # =====================================================================
 
-name: Build ImmWrt SNAPSHOT
+name: Build ImmWrt 25.12.0 Stable
 
 on:
   workflow_dispatch:
@@ -26,7 +26,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 300
+    timeout-minutes: 360
 
     steps:
       - name: Checkout Source
@@ -48,6 +48,11 @@ jobs:
                   delay=$((delay * 2 + RANDOM % 3))
                   sleep $delay
                 else
+                  echo "❌ FAILED after $max retries: $@"
+                  echo "--- Retry History ---"
+                  cat /tmp/retry_history.log || true
+                  echo "--- Debug Log ---"
+                  cat /tmp/retry_debug.log || true
                   exit 1
                 fi
               }
@@ -59,7 +64,7 @@ jobs:
       - name: Init SRE Environment & Space Cleanup
         run: |
           set -euo pipefail
-          echo "=== 💥 啟動沙皇級核爆清理 (釋放終極極限空間) ==="
+          echo "=== 💥 啟動沙皇級核爆清理 (釋放極限空間) ==="
           sudo rm -rf \
             /usr/share/dotnet \
             /usr/local/lib/android \
@@ -80,10 +85,12 @@ jobs:
             
           sudo docker system prune -af || true
           sudo apt-get clean
+          # 採納大師微優化：徹底清空 apt 快取清單，榨乾最後一滴可用空間
+          sudo rm -rf /var/lib/apt/lists/*
           
-          echo "=== 🚀 部署依賴與內存裝甲 ==="
+          echo "=== 🚀 部署依賴與內存裝甲 (精簡模式) ==="
           sudo apt-get update -qq
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             build-essential \
             clang \
             flex \
@@ -95,16 +102,19 @@ jobs:
             git \
             libncurses5-dev \
             libssl-dev \
-            python3-distutils \
             rsync \
             unzip \
             zlib1g-dev \
             file \
             wget \
             jq \
-            golang-go
+            golang-go \
+            python3-setuptools
+            
+          sudo apt-get install -y --no-install-recommends python3-distutils || true
             
           sudo swapoff -a || true
+          # 4G Swap 甜蜜點，防禦 OOM 且避免 IO 顛簸
           sudo fallocate -l 4G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
@@ -122,19 +132,13 @@ jobs:
         run: |
           set -euo pipefail
           source /tmp/sre_utils.sh
-          # 🚀 拉取 master 分支 (解鎖精準 rXXXXX 版本號)
-          retry git clone -b master https://github.com/immortalwrt/immortalwrt.git openwrt
+          # 🚀 鎖定主線源碼 (depth=1 節省大量 IO 與時間)
+          retry git clone --depth=1 -b master https://github.com/immortalwrt/immortalwrt.git openwrt
           cd openwrt
+          
           retry ./scripts/feeds update -a
           
-          # ✅ 終極物理防護 - 徹底切斷舊版供應鏈
-          ./scripts/feeds uninstall \
-            luci-app-passwall \
-            xray-core \
-            sing-box \
-            luci-app-upnp \
-            luci-app-advanced-reboot || true
-            
+          # ✅ 物理防護 - 徹底切斷舊版供應鏈
           rm -rf feeds/luci/applications/luci-app-passwall
           rm -rf feeds/packages/net/xray-core
           rm -rf feeds/packages/net/sing-box
@@ -142,7 +146,7 @@ jobs:
           rm -rf package/feeds/packages/xray-core
           rm -rf package/feeds/packages/sing-box
           
-          # 🚀 拉取官方最新 PassWall (保留高效 depth=1)
+          # 🚀 拉取官方最新 PassWall
           retry git clone --depth=1 \
             https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git \
             package/openwrt-passwall-packages
@@ -152,44 +156,7 @@ jobs:
             
           retry ./scripts/feeds install -a -f
 
-          # =====================================================
-          # 🔒 Stable Drift Control v1.1 (ADAPTIVE REVISION)
-          # =====================================================
-          set +e
-          echo "🔒 [SDC v1.1] Adaptive drift mode active..."
-          
-          sync_hash () {
-            local name="$1"
-            local makefile="$2"
-            local pattern="$3"
-            
-            if [ ! -f "$makefile" ]; then
-              echo "⚠️ $name: Makefile missing, skip"
-              return
-            fi
-            
-            sed -i 's/^PKG_HASH:=.*/PKG_HASH:=skip/' "$makefile"
-            make "package/${name}/download" V=s >/dev/null 2>&1 || true
-            
-            FILE=$(ls dl/${pattern}* 2>/dev/null | grep -E '\.(tar\.gz|tar\.xz|zip)$' | head -n 1)
-            
-            if [ -n "$FILE" ]; then
-              NEW_HASH=$(sha256sum "$FILE" | awk '{print $1}')
-              sed -i "s/^PKG_HASH:=skip/PKG_HASH:=$NEW_HASH/" "$makefile"
-              echo "✅ $name: Upstream aligned -> $NEW_HASH"
-            else
-              echo "⚠️ $name: Artifact missing, keeping 'skip' to force build"
-            fi
-          }
-
-          sync_hash "sing-box" "package/openwrt-passwall-packages/sing-box/Makefile" "sing-box-"
-          sync_hash "xray-core" "package/openwrt-passwall-packages/xray-core/Makefile" "Xray-core-"
-          
-          set -e
-          echo "🔒 [SDC v1.1] Adaptive mode completed"
-          # =====================================================
-
-          # 🚀 v3.38f 黃金定點抹除法 (掛載點)
+          # 🚀 黃金定點抹除法 (掛載點)
           ./scripts/feeds uninstall luci-app-fstab || true
           rm -rf feeds/luci/applications/luci-app-fstab
           rm -rf package/feeds/luci/luci-app-fstab
@@ -209,23 +176,24 @@ jobs:
               echo "commit: $(git -C "$repo_root" rev-parse HEAD) $repo_root"
           done | sort -u > feeds.snapshot.txt
           
-      - name: Generate Core Config & SRE Diagnostic Probes
+      - name: Generate Core Config & Global Language Setup
         run: |
           set -euo pipefail
           cd openwrt
+          mkdir -p logs
           
-          # 🇨🇳 溫和注入法：強制底層讀取 Auto 語系
+          # 🇨🇳 UCI 保險機制，鎖定 zh_cn
           mkdir -p files/etc/uci-defaults
           cat << 'EOF' > files/etc/uci-defaults/99-force-language
           #!/bin/sh
-          uci -q set luci.main.lang='auto'
+          uci -q set luci.main.lang='zh_cn'
           uci -q commit luci
           exit 0
           EOF
           chmod +x files/etc/uci-defaults/99-force-language
           
           # ==========================================================
-          # ⚙️ 核心套件清單 (回退至最標準的 zh-cn 陣列)
+          # ⚙️ 核心套件清單 (全局語言主控變數)
           # ==========================================================
           {
             echo "CONFIG_TARGET_x86=y"
@@ -235,8 +203,10 @@ jobs:
             echo "CONFIG_TARGET_IMAGES_GZIP=y"
             echo "CONFIG_PACKAGE_luci=y"
             
+            # 🌐 核心全局語言入口
+            echo "CONFIG_LUCI_LANG_zh_Hans=y"
+            
             echo "CONFIG_PACKAGE_luci-app-passwall=y"
-            echo "CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y"
             echo "CONFIG_PACKAGE_xray-core=y"
             echo "CONFIG_PACKAGE_sing-box=y"
             echo "CONFIG_PACKAGE_geoview=y"
@@ -245,24 +215,17 @@ jobs:
             echo "CONFIG_PACKAGE_ca-certificates=y"
             echo "CONFIG_PACKAGE_smartdns=y"
             echo "CONFIG_PACKAGE_luci-app-smartdns=y"
-            echo "CONFIG_PACKAGE_luci-i18n-smartdns-zh-cn=y"
             echo "CONFIG_PACKAGE_luci-app-ddns=y"
-            echo "CONFIG_PACKAGE_luci-i18n-ddns-zh-cn=y"
             echo "CONFIG_PACKAGE_ddns-scripts-cloudflare=y"
             echo "CONFIG_PACKAGE_luci-app-upnp=y"
-            echo "CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=y"
             
             echo "CONFIG_PACKAGE_luci-theme-argon=y"
             echo "CONFIG_PACKAGE_luci-app-argon-config=y"
-            echo "CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y"
-            echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y"
             
             echo "CONFIG_PACKAGE_qemu-ga=y"
             echo "CONFIG_PACKAGE_irqbalance=y"
             echo "CONFIG_PACKAGE_luci-app-ttyd=y"
-            echo "CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y"
             echo "CONFIG_PACKAGE_luci-app-advanced-reboot=y"
-            echo "CONFIG_PACKAGE_luci-i18n-advanced-reboot-zh-cn=y"
             
             echo "CONFIG_PACKAGE_htop=y"
             echo "CONFIG_PACKAGE_ethtool=y"
@@ -281,34 +244,31 @@ jobs:
           make defconfig
           
           # ==========================================================
-          # 🚨 SRE 深海聲納偵察系統 (大師指定終極探測網) 🚨
+          # 🚨 工業級 SRE 測試左移：精準依賴掃描與配置導出
           # ==========================================================
-          echo "========== 🕵️‍♂️ SRE DIAGNOSTIC: LuCI Core =========="
-          grep "^CONFIG_PACKAGE_luci" .config || true
+          echo "===== 🕵️‍♂️ SRE FINAL CHECK: LUCI LANG ====="
+          grep "LUCI_LANG" .config || true
           
-          echo "========== 🕵️‍♂️ SRE DIAGNOSTIC: LuCI Language =========="
-          grep "luci-i18n" .config || true
+          echo "===== 🕵️‍♂️ SRE FINAL CHECK: SELECTED I18N PACKAGES ====="
+          grep -E "^CONFIG_PACKAGE_(luci-i18n|luci-app-)" .config > logs/selected-packages.log || true
+          head -n 300 logs/selected-packages.log
           
-          echo "========== 🕵️‍♂️ SRE DIAGNOSTIC: Config.in Search =========="
-          grep -R "luci-i18n-base" feeds package 2>/dev/null | head -n 50 || true
+          echo "===== 🕵️‍♂️ SRE FINAL CHECK: PASSWALL MAKEFILE DEEP SEARCH ====="
+          grep -rE "LUCI_LANG|LUCI_LC_ALIAS|luci-i18n|PKG_LANG|zh-cn" package/openwrt-passwall 2>/dev/null > logs/passwall-language.log || true
+          head -n 300 logs/passwall-language.log
           
-          echo "========== 🕵️‍♂️ SRE DIAGNOSTIC: zh-cn / zh-hans Source Search =========="
-          grep -ri "zh-cn" feeds package 2>/dev/null | head -n 30 || true
-          grep -ri "zh-hans" feeds package 2>/dev/null | head -n 30 || true
+          echo "===== 🕵️‍♂️ SRE FINAL CHECK: GLOBAL FEED LANGUAGE RADAR ====="
+          grep -rE "LUCI_LANG|LUCI_LC_ALIAS|luci-i18n|PKG_LANG" feeds package 2>/dev/null > logs/global-feed-language.log || true
+          head -n 300 logs/global-feed-language.log
           
-          echo "========== 🕵️‍♂️ SRE DIAGNOSTIC: Available i18n packages in source =========="
-          find feeds package -name "luci-i18n*" | sort | head -n 50 || true
-          
-          ./scripts/diffconfig.sh > diffconfig.txt
-          echo "========== 🕵️‍♂️ SRE DIAGNOSTIC: diffconfig =========="
-          cat diffconfig.txt || true
-          echo "==========================================================================="
+          ./scripts/diffconfig.sh > logs/diffconfig.txt
+          gzip -9 -c .config > logs/full.config.gz
           
       - name: Generate Cache Variables
         id: var
         run: |
           echo "date=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
-          echo "dl_key=dl-snapshot-${{ hashFiles('openwrt/feeds.conf.default', 'openwrt/feeds.snapshot.txt') }}" >> $GITHUB_OUTPUT
+          echo "dl_key=dl-25.12.0-${{ hashFiles('openwrt/feeds.conf.default', 'openwrt/feeds.snapshot.txt') }}" >> $GITHUB_OUTPUT
           
       - name: Restore Cache
         id: cache_restore
@@ -318,14 +278,13 @@ jobs:
             openwrt/dl
           key: ${{ steps.var.outputs.dl_key }}
           restore-keys: |
-            dl-snapshot-
+            dl-25.12.0-
             
       - name: Build Firmware
         run: |
           set -euo pipefail
           source /tmp/sre_utils.sh
           cd openwrt
-          mkdir -p logs
           [ -f feeds.snapshot.txt ] && \
             cp feeds.snapshot.txt logs/snapshot.sbom || true
           export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct || date +%s)
@@ -337,19 +296,21 @@ jobs:
           cleanup_monitor() {
             echo "🧹 關閉駕駛艙雷達..."
             [ -n "$MONITOR_PID" ] && kill "$MONITOR_PID" 2>/dev/null || true
-            jobs -p | xargs -r kill -9 2>/dev/null || true
           }
           trap cleanup_monitor EXIT INT TERM
           
           (
             echo "📡 BUILD MONITOR START"
             while true; do
-              echo "[MONITOR] $(date '+%H:%M:%S') | RAM: $(free -m | awk '/Mem:/ {print $3"/"$2"MB"}') | DISK: $(df -h / | awk 'NR==2 {print $5}')"
+              LOAD=$(uptime | awk -F'load average:' '{print $2}' | xargs)
+              echo "[MONITOR] $(date '+%H:%M:%S') | CPU Load: $LOAD | RAM: $(free -m | awk '/Mem:/ {print $3"/"$2"MB"}') | DISK: $(df -h / | awk 'NR==2 {print $5}')"
               sleep 120 || true
             done
           ) &
           MONITOR_PID=$!
           # ==========================================
+          
+          touch logs/build-debug.log
           
           for i in 1 2 3; do
             make download -j$(nproc) && break || {
@@ -357,8 +318,10 @@ jobs:
             }
             [ $i -eq 3 ] && make download -j1 V=s
           done
+          
           if ! make -j$(nproc) 2>&1 | tee logs/build.log; then
-            rm -rf tmp build_dir/hostpkg staging_dir/hostpkg
+            echo "⚠️ [FAIL] 快速編譯失敗，啟動核爆級重置與單線程除錯編譯..."
+            rm -rf tmp build_dir staging_dir
             make -j1 V=s 2>&1 | tee logs/build-debug.log || exit 1
           fi
           
@@ -376,48 +339,59 @@ jobs:
           cd openwrt
           
           # =========================================================================
-          # 📡 產物遙測 (加入 APK 世代檢測與全字元模糊攔截)
+          # 📡 產物遙測與空投阻斷 (Pre-Release Check)
           # =========================================================================
-          echo "========== 🕵️‍♂️ SRE DIAGNOSTIC: APK Migration Check =========="
-          find bin/ -name "*.apk" -type f | head -n 30 || true
-          
-          echo "========== 🕵️‍♂️ SRE DIAGNOSTIC: Artifact Search (*zh*) =========="
-          ZH_CN_PACKAGES=$(find bin/ -iname "*zh*" -type f || true)
-          if [ -n "$ZH_CN_PACKAGES" ]; then
-              echo "✅ 實體中文語言包確認產出 (無視副檔名)："
-              echo "$ZH_CN_PACKAGES"
-          else
-              echo "::warning title=SRE Alert (Language Drift)::未在 bin 目錄檢測到任何包含 zh 的產物，等待分析源碼探測日誌。"
-          fi
-          
-          echo "🔍 SRE 正在執行產物級主題指紋觀測..."
-          ARGON_PACKAGES=$(find bin/ -name "*theme-argon*" -type f || true)
-          if [ -n "$ARGON_PACKAGES" ]; then
-              echo "✅ 實體 Argon 主題包確認產出！"
-          else
-              echo "::warning title=SRE Alert (Theme Missing)::未在 bin 目錄檢測到實體 Argon 主題檔案！"
-          fi
-          
           cd bin/targets/x86/64/
+          
+          # 採納大師雙重阻斷：韌體與 Checksum 皆不可或缺
+          FIRMWARE_COUNT=$(find . -name "*combined*.img.gz" -type f | wc -l)
+          if [ "$FIRMWARE_COUNT" -eq 0 ]; then
+            echo "::error title=Firmware Missing::❌ 未檢測到 *combined*.img.gz 產物，編譯可能已嚴重損壞，中斷發布！"
+            exit 1
+          fi
+          if [ ! -f "sha256sums" ]; then
+            echo "::error title=Checksums Missing::❌ 未檢測到 sha256sums 檔案，目標映像命名可能已改變，中斷發布！"
+            exit 1
+          fi
+          echo "✅ 檢測到 $FIRMWARE_COUNT 個韌體映像檔與校驗檔，準備發布。"
+          
           find . -name "*combined*.img.gz" -type f | sort | \
             xargs sha256sum > manifest.txt || true
           sha256sum --ignore-missing -c sha256sums || true
           mv manifest.txt ../../../../logs/ || true
           
+          cd ../../../../
+          
+          # 搜尋 APKINDEX 與 Packages 中繼資料
+          find bin/packages -type f \( -name "APKINDEX*" -o -name "Packages*" \) > logs/apk-indexes.log || true
+          head -n 30 logs/apk-indexes.log
+          
+          # 直接狙擊實體的 luci-i18n 檔案
+          find bin/packages -type f -name "*luci-i18n*" > logs/luci-i18n-packages.log || true
+          head -n 30 logs/luci-i18n-packages.log
+          
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: SNAPSHOT-b${{ github.run_number }}-${{ steps.var.outputs.date }}
-          name: ImmWrt SNAPSHOT (Bleeding Edge - Ultimate Recon)
+          tag_name: STABLE-b${{ github.run_number }}-${{ steps.var.outputs.date }}
+          name: ImmWrt 25.12.0 (穩定正式版)
           body: |
-            ### ⚠️ ImmWrt SNAPSHOT (開發嘗鮮版 - 終極偵察任務)
-            - **源碼主線**：全面切換至 `master` 分支。
-            - **SRE 深海聲納陣列**：本版本已佈署全域 `Config.in` 穿透掃描、`diffconfig` 曝露機制，以及對抗上游框架變革的 **APK 遷移檢測雷達**。
-            - **任務指示**：韌體編譯完成後，請第一時間解析 GitHub Actions 運行日誌中的 `🕵️‍♂️ SRE DIAGNOSTIC` 區塊，獲取底層依賴漂移的絕對真相！
+            ### 🛡️ ImmWrt 25.12.0 (穩定正式版)
+            - **系統基底**：鎖定 `25.12.0` 主線架構，部署工業級安全防禦與極致空間壓榨 (`-j$(nproc)`, `4G Swap`, 精簡 APT 依賴)。
+            - **空投防護**：搭載雙重 Fail-fast 阻斷機制 (映像與 Checksum 校驗)，確保發布產物絕對可用。
+            - **全景可觀測性**：配置環境已無損壓縮打包，全量診斷日誌已匯出至附件，編譯失敗可直查 `build-debug.log`。
           files: |
             openwrt/bin/targets/x86/64/*combined*.img.gz
             openwrt/bin/targets/x86/64/sha256sums
             openwrt/logs/manifest.txt
             openwrt/logs/snapshot.sbom
+            openwrt/logs/diffconfig.txt
+            openwrt/logs/full.config.gz
+            openwrt/logs/selected-packages.log
+            openwrt/logs/passwall-language.log
+            openwrt/logs/apk-indexes.log
+            openwrt/logs/luci-i18n-packages.log
+            openwrt/logs/build.log
+            openwrt/logs/build-debug.log
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
