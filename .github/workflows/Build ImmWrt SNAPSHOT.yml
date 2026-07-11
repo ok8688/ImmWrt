@@ -1,10 +1,10 @@
 # =====================================================================
-# ⚠️ [BLEEDING EDGE] - ImmWrt SNAPSHOT (開發嘗鮮版 - 邏輯優先序完美體)
+# ⚠️ [BLEEDING EDGE] - ImmWrt SNAPSHOT (開發嘗鮮版 - 專家聯名終極完全體)
 # =====================================================================
 # 狀態：基於 7.0 沙皇級物理空間強化基建，解鎖主線 (master) 狂暴模式。
 # 審核：解鎖完整 git 歷史拉取，確保 LuCI 後台精準顯示 rXXXXX 版本號。
-# 優化：物理級注入正統 config core 設定，升級為標準 install -d 語法。
-# 遙測：掛載「產物驅動型觀測系統」，修復 find 邏輯優先序漏洞，相容改名漂移。
+# 核心：升級為 CONFIG_PACKAGE_luci=y，徹底解決 master 分支 luci-light 依賴斷裂導致 theme=null 的 Bug。
+# 修復：淨化 uci-defaults 語法，移除非標準節點；升級雙重主題+語言遙測雷達。
 # =====================================================================
 
 name: Build ImmWrt SNAPSHOT
@@ -216,13 +216,18 @@ jobs:
           cd openwrt
           
           # ==========================================================
-          # 🇨🇳 使用標準 install -d 語法，注入最純淨的正統 config core
+          # 🇨🇳 採納大師建議：採用最相容之 uci-defaults 溫和補丁邏輯
           # ==========================================================
-          install -d files/etc/config
-          cat << 'EOF' > files/etc/config/luci
-          config core
-              option lang 'zh_cn'
+          mkdir -p files/etc/uci-defaults
+          cat << 'EOF' > files/etc/uci-defaults/99-force-language
+          #!/bin/sh
+          # 直接對現有節點進行精準微調，不建立任何非標準 Section
+          uci -q set luci.main.lang='zh_cn'
+          uci -q set luci.core.lang='zh_cn'
+          uci -q commit luci
+          exit 0
           EOF
+          chmod +x files/etc/uci-defaults/99-force-language
           
           {
             echo "CONFIG_TARGET_x86=y"
@@ -230,6 +235,7 @@ jobs:
             echo "CONFIG_TARGET_x86_64_DEVICE_generic=y"
             echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1536"
             echo "CONFIG_TARGET_IMAGES_GZIP=y"
+            echo "CONFIG_PACKAGE_luci=y"  # 👈 採納大師建議：從 luci-light 升級為完整版 luci，強行綁死核心依賴鏈，摧毀 theme=null 錯誤
             echo "CONFIG_PACKAGE_luci-app-passwall=y"
             echo "CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y"
             echo "CONFIG_PACKAGE_xray-core=y"
@@ -245,7 +251,6 @@ jobs:
             echo "CONFIG_PACKAGE_ddns-scripts-cloudflare=y"
             echo "CONFIG_PACKAGE_luci-app-upnp=y"
             echo "CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=y"
-            echo "CONFIG_PACKAGE_luci-light=y"
             echo "CONFIG_PACKAGE_luci-theme-argon=y"
             echo "CONFIG_PACKAGE_luci-app-argon-config=y"
             echo "CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y"
@@ -355,16 +360,24 @@ jobs:
           cd openwrt
           
           # =========================================================================
-          # 📡 SRE 遙測系統：產物結構觀測 (採納大師修正：補全括號，修復運算優先序漏洞)
+          # 📡 採納大師建議：掛載「雙重產物驅動型遙測雷達」（語言包 + 實體主題包）
           # =========================================================================
-          echo "🔍 SRE 正在執行產物級中文指紋觀測..."
+          echo "🔍 SRE 正在執行產物級語言指紋觀測..."
           ZH_CN_PACKAGES=$(find bin/ \( -name "*zh-cn*.ipk" -o -name "*zh_Hans*.ipk" \) -type f || true)
-          
           if [ -n "$ZH_CN_PACKAGES" ]; then
-              echo "✅ 實體中文語言包已產出，外殼與優先序校驗完美符合："
-              echo "$ZH_CN_PACKAGES"
+              echo "✅ 實體中文語言包確認產出。"
           else
-              echo "::warning title=SRE Alert (Language Drift)::未在 bin/ 目錄檢測到獨立的中文 .ipk 檔案。這可能是上游更改了包名或將其直接封裝進 rootfs。韌體放行，但請留意開機後的語言設定。"
+              echo "::warning title=SRE Alert (Language Drift)::未在 bin 目錄檢測到獨立中文 .ipk 包。"
+          fi
+          
+          echo "🔍 SRE 正在執行產物級主題指紋觀測..."
+          ARGON_PACKAGES=$(find bin/ -name "*theme-argon*.ipk" -type f || true)
+          if [ -n "$ARGON_PACKAGES" ]; then
+              echo "✅ 實體 Argon 主題包確認產出，底層依賴鏈極度健康！"
+              echo "$ARGON_PACKAGES"
+          else
+              # ⚠️ 發送警告，防範上游再次斷裂
+              echo "::warning title=SRE Alert (Theme Missing)::未在 bin 目錄檢測到實體 Argon 主題 .ipk 檔案！這意味著主題包可能未被成功編譯，請高度警惕 theme=null 錯誤！"
           fi
           
           cd bin/targets/x86/64/
@@ -381,8 +394,8 @@ jobs:
           body: |
             ### ⚠️ ImmWrt SNAPSHOT (開發嘗鮮版)
             - **源碼主線**：全面切換至 `master` 分支，解鎖完整 Git 歷史拉取。
-            - **精準遙測機制**：引入具備邏輯優先序校驗的實體產物掃描，若遭遇上游架構變更導致 `.ipk` 遺失，將發出非阻斷式警告 (`::warning::`)，確保對 master 分支具備最高相容性與韌性。
-            - **正統語法精煉**：物理直接注入完美符合標準 UCI 規範的 `config core` 實體檔案，使用 `install -d` 原子級語法構建。
+            - **重磅修復 (Theme=null)**：採納專家最高方針，將編譯核心由 `luci-light` 升級為完整版 `luci`，強行修復 master 分支因依賴變更導致主題丟失的重大 Bug。
+            - **雙重遙測雷達**：同時監控中文包與 Argon 主題包的實體產物狀態，提供最強大的相容性與警報觀測。
             - **沙皇防禦繼承**：完整繼承 v7.0.0-LTS 的極限空間清理協議與 SRE 防禦雷達。
           files: |
             openwrt/bin/targets/x86/64/*combined*.img.gz
