@@ -1,9 +1,10 @@
 # =====================================================================
-# ⚠️ [BLEEDING EDGE] - ImmWrt SNAPSHOT (開發嘗鮮版 - 終極中文架構優化)
+# ⚠️ [BLEEDING EDGE] - ImmWrt SNAPSHOT (開發嘗鮮版 - 邏輯優先序完美體)
 # =====================================================================
 # 狀態：基於 7.0 沙皇級物理空間強化基建，解鎖主線 (master) 狂暴模式。
 # 審核：解鎖完整 git 歷史拉取，確保 LuCI 後台精準顯示 rXXXXX 版本號。
-# 優化：採納專家審核意見，物理級直接注入實體 luci 設定檔，完美相容新版 core 節點。
+# 優化：物理級注入正統 config core 設定，升級為標準 install -d 語法。
+# 遙測：掛載「產物驅動型觀測系統」，修復 find 邏輯優先序漏洞，相容改名漂移。
 # =====================================================================
 
 name: Build ImmWrt SNAPSHOT
@@ -215,18 +216,12 @@ jobs:
           cd openwrt
           
           # ==========================================================
-          # 🇨🇳 採納專家建議：直接注入實體設定檔，完美相容新舊結構，開局即中文
+          # 🇨🇳 使用標準 install -d 語法，注入最純淨的正統 config core
           # ==========================================================
-          mkdir -p files/etc/config
+          install -d files/etc/config
           cat << 'EOF' > files/etc/config/luci
-          config main core
-              option lang 'zh_cn'
-          
           config core
               option lang 'zh_cn'
-          
-          config languages
-              option zh_cn '中文 (Chinese)'
           EOF
           
           {
@@ -277,8 +272,8 @@ jobs:
           } > .config
           make defconfig
           
-          # 🔍 採納專家建議：強效防護，驗證中文包是否被上游意外踢除
-          if grep -q "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" .config; then
+          # 🔍 升級為最嚴格的行首行尾正則精準全匹配夾擊
+          if grep -q '^CONFIG_PACKAGE_luci-i18n-base-zh-cn=y$' .config; then
               echo "✅ SRE Check: 中文語言底座確認鎖定。"
           else
               echo "⚠️ SRE Warning: 中文語言底座未被選中，強行重新追加！"
@@ -357,7 +352,22 @@ jobs:
       - name: Validate & Final SBOM
         run: |
           set -euo pipefail
-          cd openwrt/bin/targets/x86/64/
+          cd openwrt
+          
+          # =========================================================================
+          # 📡 SRE 遙測系統：產物結構觀測 (採納大師修正：補全括號，修復運算優先序漏洞)
+          # =========================================================================
+          echo "🔍 SRE 正在執行產物級中文指紋觀測..."
+          ZH_CN_PACKAGES=$(find bin/ \( -name "*zh-cn*.ipk" -o -name "*zh_Hans*.ipk" \) -type f || true)
+          
+          if [ -n "$ZH_CN_PACKAGES" ]; then
+              echo "✅ 實體中文語言包已產出，外殼與優先序校驗完美符合："
+              echo "$ZH_CN_PACKAGES"
+          else
+              echo "::warning title=SRE Alert (Language Drift)::未在 bin/ 目錄檢測到獨立的中文 .ipk 檔案。這可能是上游更改了包名或將其直接封裝進 rootfs。韌體放行，但請留意開機後的語言設定。"
+          fi
+          
+          cd bin/targets/x86/64/
           find . -name "*combined*.img.gz" -type f | sort | \
             xargs sha256sum > manifest.txt || true
           sha256sum --ignore-missing -c sha256sums || true
@@ -370,9 +380,9 @@ jobs:
           name: ImmWrt SNAPSHOT (Bleeding Edge)
           body: |
             ### ⚠️ ImmWrt SNAPSHOT (開發嘗鮮版)
-            - **源碼主線**：已全面切換至 `master` 分支，解鎖完整 Git 歷史拉取。
-            - **大師級中文修復**：棄用 uci-defaults，改為物理直接注入 `files/etc/config/luci` 實體設定檔，融合新舊 core/main 命名空間，達成開機即中文的最高相容性。
-            - **防退回校驗**：編譯階段自動啟動 grep 防呆檢測，預防上游隨機踢除語言底座。
+            - **源碼主線**：全面切換至 `master` 分支，解鎖完整 Git 歷史拉取。
+            - **精準遙測機制**：引入具備邏輯優先序校驗的實體產物掃描，若遭遇上游架構變更導致 `.ipk` 遺失，將發出非阻斷式警告 (`::warning::`)，確保對 master 分支具備最高相容性與韌性。
+            - **正統語法精煉**：物理直接注入完美符合標準 UCI 規範的 `config core` 實體檔案，使用 `install -d` 原子級語法構建。
             - **沙皇防禦繼承**：完整繼承 v7.0.0-LTS 的極限空間清理協議與 SRE 防禦雷達。
           files: |
             openwrt/bin/targets/x86/64/*combined*.img.gz
