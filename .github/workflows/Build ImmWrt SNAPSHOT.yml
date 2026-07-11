@@ -1,9 +1,9 @@
 # =====================================================================
-# ⚠️ [BLEEDING EDGE] - ImmWrt SNAPSHOT (開發嘗鮮版 - 完整歷史)
+# ⚠️ [BLEEDING EDGE] - ImmWrt SNAPSHOT (開發嘗鮮版 - 完整歷史 + 全局中文)
 # =====================================================================
 # 狀態：基於 7.0 沙皇級物理空間強化基建，解鎖主線 (master) 狂暴模式。
 # 審核：解鎖完整 git 歷史拉取，確保 LuCI 後台精準顯示 rXXXXX 版本號。
-# 警告：SNAPSHOT 源碼更新頻繁，編譯出錯多為上游 Bug，請保持警惕。
+# 修復：強制掛載 CONFIG_LUCI_LANG_zh_cn=y，擊碎 master 分支的英文預設回滾。
 # =====================================================================
 
 name: Build ImmWrt SNAPSHOT
@@ -60,7 +60,6 @@ jobs:
         run: |
           set -euo pipefail
           echo "=== 💥 啟動沙皇級核爆清理 (釋放終極極限空間) ==="
-          # ☢️ 追加清理 hostedtoolcache (GitHub 預裝工具包)、rust、powershell 等巨獸
           sudo rm -rf \
             /usr/share/dotnet \
             /usr/local/lib/android \
@@ -221,6 +220,7 @@ jobs:
             echo "CONFIG_TARGET_x86_64_DEVICE_generic=y"
             echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1536"
             echo "CONFIG_TARGET_IMAGES_GZIP=y"
+            echo "CONFIG_LUCI_LANG_zh_cn=y"  # 👈 新增：強制全局中文環境開關
             echo "CONFIG_PACKAGE_luci-app-passwall=y"
             echo "CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y"
             echo "CONFIG_PACKAGE_xray-core=y"
@@ -348,6 +348,7 @@ jobs:
           body: |
             ### ⚠️ ImmWrt SNAPSHOT (開發嘗鮮版)
             - **源碼主線**：已全面切換至 ImmortalWrt `master` 分支 (解鎖完整 git 歷史拉取，後台精準顯示 rXXXXX 版本號)。
+            - **語言預設修復**：強制掛載 `CONFIG_LUCI_LANG_zh_cn=y`，擊碎 master 分支的英文預設回滾。
             - **沙皇防禦繼承**：完整繼承 v7.0.0-LTS 的極限空間清理協議與 SRE 防禦雷達。
             - **潛在風險聲明**：此版本追蹤最新提交代碼，隨時可能包含未修復的上游 Bug。若發生編譯失敗且雷達顯示空間充足，99% 為上游源碼斷裂，請等待上游修復。
           files: |
