@@ -1,9 +1,11 @@
 # =====================================================================
-# 🛡️ [GOLD-FINAL-v1] - ImmWrt 25.12.0 (APK-Only 穩定典藏版)
+# 🛡️ [GOLD-FINAL-v1.2] - ImmWrt 25.12.0 (APK-Only 穩定典藏版)
 # =====================================================================
 # 狀態：工程化封存版本，具備 100% 可重現與高度除錯追蹤能力。
-# 封裝：Immutable Cache Key、Full Build Logs、SBOM、ABI Fingerprint。
-# 指引：僅允許調整 .config 或 Package 列表，嚴禁改動 CI 基礎架構。
+# 修正：
+# 1. 驗證階段引入目錄存在性檢查。
+# 2. Debug 重編階段強化清理邏輯 (包含 staging_dir)。
+# 3. 嚴格 Pipefail 與目錄防禦機制，確保 CI 鏈條在極端情況下亦不崩潰。
 # =====================================================================
 
 name: Build ImmWrt 25.12.0 Stable
@@ -82,13 +84,13 @@ jobs:
           echo "=== 🧬 ABI Fingerprint ===" > toolchain.info
           echo "Build Date: $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> toolchain.info
           uname -r >> toolchain.info
-          gcc --version | head -n 1 >> toolchain.info
-          clang --version | head -n 1 >> toolchain.info
-          ld --version | head -n 1 >> toolchain.info
-          ldd --version | head -n 1 >> toolchain.info
+          gcc --version | sed -n '1p' >> toolchain.info
+          clang --version | sed -n '1p' >> toolchain.info
+          ld --version | sed -n '1p' >> toolchain.info
+          ldd --version | sed -n '1p' >> toolchain.info
           go version >> toolchain.info || true
           git --version >> toolchain.info
-          make --version | head -n 1 >> toolchain.info
+          make --version | sed -n '1p' >> toolchain.info
           python3 --version >> toolchain.info
           dpkg -s libc6 | grep Version >> toolchain.info
           
@@ -196,7 +198,7 @@ jobs:
           
           if ! make -j$(nproc) BUILD_LOG=1 2>&1 | tee logs/build.log; then
             echo "⚠️ [FAIL] Fast build failed, switching to single-thread debug build..."
-            rm -rf tmp build_dir
+            rm -rf tmp build_dir staging_dir
             make -j1 V=s BUILD_LOG=1 2>&1 | tee logs/build-debug.log || exit 1
           fi
           
@@ -206,7 +208,7 @@ jobs:
       - name: Cleanup & Save Cache
         if: always() && !cancelled()
         run: |
-          find openwrt/dl -type f -size -4k -delete
+          [ -d openwrt/dl ] && find openwrt/dl -type f -size -4k -delete
           sync
         
       - name: Save Cache
@@ -221,7 +223,10 @@ jobs:
       - name: Validate & Final Packaging
         run: |
           ROOT="$(pwd)"
-          cd openwrt/bin/targets/x86/64/
+          TARGET_DIR="openwrt/bin/targets/x86/64"
+          [ -d "$TARGET_DIR" ] || exit 1
+          cd "$TARGET_DIR"
+          
           shopt -s nullglob; files=(*combined*.img.gz); [ ${#files[@]} -eq 0 ] && exit 1; shopt -u nullglob
           for f in *combined*.img.gz; do gunzip -t "$f" || exit 1; done
           
