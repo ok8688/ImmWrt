@@ -1,9 +1,9 @@
 # =====================================================================
-# 🛡️ [STABLE] - ImmWrt 25.12.0 (穩定正式版 - 100/100 傳世典藏版)
+# 🛡️ [GOLD-FINAL-v1] - ImmWrt 25.12.0 (APK-Only 穩定典藏版)
 # =====================================================================
-# 狀態：基於 25.12.0 正式版架構，鎖定主線 (master) 穩定構建。
-# 核心：維持 CONFIG_PACKAGE_luci=y，驅動 CONFIG_LUCI_LANG_zh_Hans。
-# 終極修正：極致 apt 空間釋放、雙重產物空投阻斷、修復 0-byte 日誌導致的發布失敗。
+# 狀態：工程化封存版本，具備 100% 可重現與高度除錯追蹤能力。
+# 封裝：Immutable Cache Key、Full Build Logs、SBOM、ABI Fingerprint。
+# 指引：僅允許調整 .config 或 Package 列表，嚴禁改動 CI 基礎架構。
 # =====================================================================
 
 name: Build ImmWrt 25.12.0 Stable
@@ -11,7 +11,7 @@ name: Build ImmWrt 25.12.0 Stable
 on:
   workflow_dispatch:
   schedule:
-    - cron: '26 14 * * 0,2,4,6' # HKT 22:26 (每週日、二、四、六)
+    - cron: '26 14 * * 0,2,4,6' # HKT 22:26
 
 concurrency:
   group: immwrt-build
@@ -22,6 +22,10 @@ permissions:
 
 env:
   DEBIAN_FRONTEND: noninteractive
+  CCACHE_DIR: /home/runner/.ccache
+  CCACHE_COMPRESS: 1
+  CCACHE_MAXSIZE: 3G
+  CCACHE_SLOPPINESS: time_macros,file_macro
 
 jobs:
   build:
@@ -32,16 +36,22 @@ jobs:
       - name: Checkout Source
         uses: actions/checkout@v4
 
+      - name: Generate Metadata
+        id: meta
+        run: echo "date=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
+
       - name: Inject SRE Core Utilities
         run: |
           cat << 'EOF' > /tmp/sre_utils.sh
           #!/bin/bash
           retry() {
+            : > /tmp/retry_history.log
+            : > /tmp/retry_debug.log
             local max=5
             local delay=2
             local n=1
             while true; do
-              "$@" 2>> /tmp/retry_debug.log && break || {
+              "$@" >> /tmp/retry_debug.log 2>&1 && break || {
                 if [[ $n -lt $max ]]; then
                   echo "⚠️ [FAIL] Attempt $n: $@" >> /tmp/retry_history.log
                   ((n++))
@@ -49,11 +59,9 @@ jobs:
                   sleep $delay
                 else
                   echo "❌ FAILED after $max retries: $@"
-                  echo "--- Retry History ---"
-                  cat /tmp/retry_history.log || true
-                  echo "--- Debug Log ---"
-                  cat /tmp/retry_debug.log || true
-                  exit 1
+                  cat /tmp/retry_history.log
+                  cat /tmp/retry_debug.log
+                  return 1
                 fi
               }
             done
@@ -61,312 +69,215 @@ jobs:
           EOF
           chmod +x /tmp/sre_utils.sh
           
-      - name: Init SRE Environment & Space Cleanup
+      - name: Init SRE Environment & ABI Fingerprint
         run: |
           set -euo pipefail
-          echo "=== 💥 啟動沙皇級核爆清理 (釋放極限空間) ==="
-          sudo rm -rf \
-            /usr/share/dotnet \
-            /usr/local/lib/android \
-            /opt/ghc \
-            /usr/share/swift \
-            /usr/local/lib/node_modules \
-            /opt/hostedtoolcache \
-            /usr/local/share/powershell \
-            /usr/share/rust \
-            /opt/microsoft \
-            /usr/local/share/edge_driver \
-            /usr/local/.ghcup \
-            /usr/share/miniconda \
-            /opt/az \
-            /usr/local/share/boost \
-            /usr/local/share/chromium \
-            /usr/local/lib/heroku
-            
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift /usr/local/lib/node_modules /opt/hostedtoolcache /usr/local/share/powershell /usr/share/rust /opt/microsoft /usr/local/share/edge_driver /usr/local/.ghcup /usr/share/miniconda /opt/az /usr/local/share/boost /usr/local/share/chromium /usr/local/lib/heroku
           sudo docker system prune -af || true
-          sudo apt-get clean
-          sudo rm -rf /var/lib/apt/lists/*
+          sudo apt-get clean && sudo rm -rf /var/lib/apt/lists/*
+          sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends build-essential clang flex bison g++ gawk gcc-multilib gettext git libncurses5-dev libssl-dev rsync unzip zlib1g-dev file wget jq golang-go python3-setuptools ccache
+          if apt-cache show python3-distutils >/dev/null 2>&1; then sudo apt-get install -y --no-install-recommends python3-distutils; fi
+          sudo swapoff -a && sudo fallocate -l 4G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
           
-          echo "=== 🚀 部署依賴與內存裝甲 (精簡模式) ==="
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            clang \
-            flex \
-            bison \
-            g++ \
-            gawk \
-            gcc-multilib \
-            gettext \
-            git \
-            libncurses5-dev \
-            libssl-dev \
-            rsync \
-            unzip \
-            zlib1g-dev \
-            file \
-            wget \
-            jq \
-            golang-go \
-            python3-setuptools
-            
-          sudo apt-get install -y --no-install-recommends python3-distutils || true
-            
-          sudo swapoff -a || true
-          sudo fallocate -l 4G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          
-          echo "=== 🧬 Deep ABI Fingerprint ===" > toolchain.info
+          echo "=== 🧬 ABI Fingerprint ===" > toolchain.info
+          echo "Build Date: $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> toolchain.info
           uname -r >> toolchain.info
           gcc --version | head -n 1 >> toolchain.info
+          clang --version | head -n 1 >> toolchain.info
           ld --version | head -n 1 >> toolchain.info
           ldd --version | head -n 1 >> toolchain.info
-          dpkg -s libc6 | grep Version >> toolchain.info
           go version >> toolchain.info || true
+          git --version >> toolchain.info
+          make --version | head -n 1 >> toolchain.info
+          python3 --version >> toolchain.info
+          dpkg -s libc6 | grep Version >> toolchain.info
           
       - name: Clone & Official PassWall Main Source
         run: |
           set -euo pipefail
           source /tmp/sre_utils.sh
-          retry git clone --depth=1 -b master https://github.com/immortalwrt/immortalwrt.git openwrt
+          retry bash -c 'rm -rf openwrt && timeout 20m git clone --depth=1 -b master https://github.com/immortalwrt/immortalwrt.git openwrt'
           cd openwrt
+          retry timeout 20m ./scripts/feeds update -a
           
-          retry ./scripts/feeds update -a
+          rm -rf feeds/luci/applications/luci-app-passwall feeds/packages/net/xray-core feeds/packages/net/sing-box
+          retry git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/openwrt-passwall-packages
+          retry git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/openwrt-passwall
           
-          rm -rf feeds/luci/applications/luci-app-passwall
-          rm -rf feeds/packages/net/xray-core
-          rm -rf feeds/packages/net/sing-box
-          rm -rf package/feeds/luci/luci-app-passwall
-          rm -rf package/feeds/packages/xray-core
-          rm -rf package/feeds/packages/sing-box
+          retry bash -c 'set -o pipefail; timeout 20m ./scripts/feeds install -a -f 2>&1 | tee ../feeds-install.log'
           
-          retry git clone --depth=1 \
-            https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git \
-            package/openwrt-passwall-packages
-          retry git clone --depth=1 \
-            https://github.com/Openwrt-Passwall/openwrt-passwall.git \
-            package/openwrt-passwall
-            
-          retry ./scripts/feeds install -a -f
-
-          ./scripts/feeds uninstall luci-app-fstab || true
-          rm -rf feeds/luci/applications/luci-app-fstab
-          rm -rf package/feeds/luci/luci-app-fstab
-          MENU_DIR="feeds/luci/modules/luci-mod-system/root/usr/share/luci/menu.d"
-          if [ -d "$MENU_DIR" ]; then
-            for f in $MENU_DIR/*.json; do
-              [ -f "$f" ] || continue
-              jq 'del(."admin/system/mounts", ."admin/services/mounts")' \
-                "$f" > "$f.tmp" && mv "$f.tmp" "$f" || true
-            done
-          fi
-          
+          echo "Build Date: $(date -u '+%Y-%m-%dT%H:%M:%SZ')" > feeds.snapshot.txt
+          echo "Branch: $(git branch --show-current)" >> feeds.snapshot.txt
+          echo "ImmortalWrt HEAD: $(git rev-parse HEAD)" >> feeds.snapshot.txt
+          echo "ImmortalWrt Describe: $(git describe --always)" >> feeds.snapshot.txt
           find feeds package -type d -name ".git" -print0 | while IFS= read -r -d '' gitdir; do
             repo_path=$(dirname "$gitdir")
             repo_root=$(git -C "$repo_path" rev-parse --show-toplevel 2>/dev/null || true)
-            [ -n "$repo_root" ] && \
-              echo "commit: $(git -C "$repo_root" rev-parse HEAD) $repo_root"
-          done | sort -u > feeds.snapshot.txt
-          
-      - name: Generate Core Config & Global Language Setup
-        run: |
-          set -euo pipefail
-          cd openwrt
-          mkdir -p logs
-          
-          mkdir -p files/etc/uci-defaults
-          cat << 'EOF' > files/etc/uci-defaults/99-force-language
-          #!/bin/sh
-          uci -q set luci.main.lang='zh_cn'
-          uci -q commit luci
-          exit 0
-          EOF
-          chmod +x files/etc/uci-defaults/99-force-language
-          
-          {
-            echo "CONFIG_TARGET_x86=y"
-            echo "CONFIG_TARGET_x86_64=y"
-            echo "CONFIG_TARGET_x86_64_DEVICE_generic=y"
-            echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1536"
-            echo "CONFIG_TARGET_IMAGES_GZIP=y"
-            echo "CONFIG_PACKAGE_luci=y"
-            
-            # 🌐 核心全局語言入口
-            echo "CONFIG_LUCI_LANG_zh_Hans=y"
-            
-            echo "CONFIG_PACKAGE_luci-app-passwall=y"
-            echo "CONFIG_PACKAGE_xray-core=y"
-            echo "CONFIG_PACKAGE_sing-box=y"
-            echo "CONFIG_PACKAGE_geoview=y"
-            
-            echo "CONFIG_PACKAGE_ca-bundle=y"
-            echo "CONFIG_PACKAGE_ca-certificates=y"
-            echo "CONFIG_PACKAGE_smartdns=y"
-            echo "CONFIG_PACKAGE_luci-app-smartdns=y"
-            echo "CONFIG_PACKAGE_luci-app-ddns=y"
-            echo "CONFIG_PACKAGE_ddns-scripts-cloudflare=y"
-            echo "CONFIG_PACKAGE_luci-app-upnp=y"
-            
-            echo "CONFIG_PACKAGE_luci-theme-argon=y"
-            echo "CONFIG_PACKAGE_luci-app-argon-config=y"
-            
-            echo "CONFIG_PACKAGE_qemu-ga=y"
-            echo "CONFIG_PACKAGE_irqbalance=y"
-            echo "CONFIG_PACKAGE_luci-app-ttyd=y"
-            echo "CONFIG_PACKAGE_luci-app-advanced-reboot=y"
-            
-            echo "CONFIG_PACKAGE_htop=y"
-            echo "CONFIG_PACKAGE_ethtool=y"
-            echo "CONFIG_PACKAGE_nano=y"
-            echo "CONFIG_PACKAGE_curl=y"
-            echo "CONFIG_PACKAGE_wget-ssl=y"
-            echo "CONFIG_PACKAGE_unzip=y"
-            echo "CONFIG_PACKAGE_kmod-tcp-bbr=y"
-            echo "CONFIG_PACKAGE_kmod-virtio-net=y"
-            echo "CONFIG_PACKAGE_kmod-virtio-blk=y"
-            echo "CONFIG_PACKAGE_kmod-nft-offload=y"
-            echo "CONFIG_PACKAGE_block-mount=n"
-            echo "CONFIG_PACKAGE_luci-app-fstab=n"
-            echo "# CONFIG_CCACHE is not set"
-          } > .config
-          make defconfig
-          
-          echo "===== 🕵️‍♂️ SRE FINAL CHECK: LUCI LANG ====="
-          grep "LUCI_LANG" .config || true
-          
-          echo "===== 🕵️‍♂️ SRE FINAL CHECK: SELECTED I18N PACKAGES ====="
-          grep -E "^CONFIG_PACKAGE_(luci-i18n|luci-app-)" .config > logs/selected-packages.log || true
-          head -n 300 logs/selected-packages.log
-          
-          echo "===== 🕵️‍♂️ SRE FINAL CHECK: PASSWALL MAKEFILE DEEP SEARCH ====="
-          grep -rE "LUCI_LANG|LUCI_LC_ALIAS|luci-i18n|PKG_LANG|zh-cn" package/openwrt-passwall 2>/dev/null > logs/passwall-language.log || true
-          head -n 300 logs/passwall-language.log
-          
-          echo "===== 🕵️‍♂️ SRE FINAL CHECK: GLOBAL FEED LANGUAGE RADAR ====="
-          grep -rE "LUCI_LANG|LUCI_LC_ALIAS|luci-i18n|PKG_LANG" feeds package 2>/dev/null > logs/global-feed-language.log || true
-          head -n 300 logs/global-feed-language.log
-          
-          ./scripts/diffconfig.sh > logs/diffconfig.txt
-          gzip -9 -c .config > logs/full.config.gz
+            remote_url=$(git -C "$repo_root" remote get-url origin 2>/dev/null || echo "unknown")
+            [ -n "$repo_root" ] && echo "commit: $(git -C "$repo_root" rev-parse HEAD) | remote: $remote_url | path: $repo_root"
+          done | sort -u >> feeds.snapshot.txt
           
       - name: Generate Cache Variables
         id: var
-        run: |
-          echo "date=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
-          echo "dl_key=dl-25.12.0-${{ hashFiles('openwrt/feeds.conf.default', 'openwrt/feeds.snapshot.txt') }}" >> $GITHUB_OUTPUT
-          
+        run: echo "dl_key=dl-25.12-${{ hashFiles('openwrt/feeds.snapshot.txt') }}" >> $GITHUB_OUTPUT
+
       - name: Restore Cache
-        id: cache_restore
         uses: actions/cache/restore@v4
         with:
           path: |
             openwrt/dl
+            ~/.ccache
           key: ${{ steps.var.outputs.dl_key }}
-          restore-keys: |
-            dl-25.12.0-
-            
+          restore-keys: dl-25.12-
+          
+      - name: Generate Core Config
+        run: |
+          cd openwrt
+          mkdir -p logs files/etc/uci-defaults
+          echo '#!/bin/sh' > files/etc/uci-defaults/99-force-language
+          echo "uci -q set luci.main.lang='zh_cn'; uci -q commit luci; exit 0" >> files/etc/uci-defaults/99-force-language
+          chmod +x files/etc/uci-defaults/99-force-language
+          cat << 'EOF' > .config
+          CONFIG_TARGET_x86=y
+          CONFIG_TARGET_x86_64=y
+          CONFIG_TARGET_x86_64_DEVICE_generic=y
+          CONFIG_TARGET_ROOTFS_PARTSIZE=1536
+          CONFIG_TARGET_IMAGES_GZIP=y
+          CONFIG_PACKAGE_luci=y
+          CONFIG_LUCI_LANG_zh_Hans=y
+          CONFIG_PACKAGE_luci-app-passwall=y
+          CONFIG_PACKAGE_xray-core=y
+          CONFIG_PACKAGE_sing-box=y
+          CONFIG_PACKAGE_smartdns=y
+          CONFIG_PACKAGE_luci-app-smartdns=y
+          CONFIG_PACKAGE_luci-app-ddns=y
+          CONFIG_PACKAGE_ddns-scripts-cloudflare=y
+          CONFIG_PACKAGE_luci-app-upnp=y
+          CONFIG_PACKAGE_luci-theme-argon=y
+          CONFIG_PACKAGE_luci-app-argon-config=y
+          CONFIG_PACKAGE_qemu-ga=y
+          CONFIG_PACKAGE_irqbalance=y
+          CONFIG_PACKAGE_luci-app-ttyd=y
+          CONFIG_PACKAGE_luci-app-advanced-reboot=y
+          CONFIG_PACKAGE_htop=y
+          CONFIG_PACKAGE_nano=y
+          CONFIG_PACKAGE_curl=y
+          CONFIG_PACKAGE_kmod-tcp-bbr=y
+          CONFIG_PACKAGE_kmod-nft-offload=y
+          CONFIG_PACKAGE_block-mount=n
+          CONFIG_PACKAGE_luci-app-fstab=n
+          CONFIG_CCACHE=y
+          EOF
+          make defconfig 2>&1 | tee logs/defconfig.log
+          ./scripts/diffconfig.sh > logs/diffconfig.txt
+          gzip -9f -c .config > logs/full.config.gz
+          
       - name: Build Firmware
         run: |
           set -euo pipefail
-          source /tmp/sre_utils.sh
           cd openwrt
-          [ -f feeds.snapshot.txt ] && \
-            cp feeds.snapshot.txt logs/snapshot.sbom || true
-          export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct || date +%s)
+          export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          export CCACHE_BASEDIR=$PWD
+          export CC="ccache gcc"
+          export CXX="ccache g++"
+          mkdir -p logs
+          cp feeds.snapshot.txt logs/snapshot.sbom
+          cp ../toolchain.info logs/toolchain.info
           
-          MONITOR_PID=""
-          cleanup_monitor() {
-            echo "🧹 關閉駕駛艙雷達..."
-            [ -n "$MONITOR_PID" ] && kill "$MONITOR_PID" 2>/dev/null || true
-          }
-          trap cleanup_monitor EXIT INT TERM
-          
-          (
-            echo "📡 BUILD MONITOR START"
-            while true; do
-              LOAD=$(uptime | awk -F'load average:' '{print $2}' | xargs)
-              echo "[MONITOR] $(date '+%H:%M:%S') | CPU Load: $LOAD | RAM: $(free -m | awk '/Mem:/ {print $3"/"$2"MB"}') | DISK: $(df -h / | awk 'NR==2 {print $5}')"
-              sleep 120 || true
-            done
-          ) &
+          ( while true; do echo "[MONITOR] $(date '+%H:%M:%S') | Load: $(uptime | awk -F'load average:' '{print $2}') | RAM: $(free -m | awk '/Mem:/ {print $3"/"$2"MB"}') | DISK: $(df -h . | awk 'NR==2 {print $3 "/" $2}')"; sleep 120; done ) &
           MONITOR_PID=$!
+          trap 'kill "$MONITOR_PID" 2>/dev/null || true; wait "$MONITOR_PID" 2>/dev/null || true' EXIT
           
-          for i in 1 2 3; do
-            make download -j$(nproc) && break || {
-              sleep $((i * 5))
-            }
-            [ $i -eq 3 ] && make download -j1 V=s
-          done
+          ccache -M "$CCACHE_MAXSIZE"
+          ccache -o compression_level=9 || true
+          ccache -z
           
-          if ! make -j$(nproc) 2>&1 | tee logs/build.log; then
-            echo "⚠️ [FAIL] 快速編譯失敗，啟動核爆級重置與單線程除錯編譯..."
-            rm -rf tmp build_dir staging_dir
-            make -j1 V=s 2>&1 | tee logs/build-debug.log || exit 1
+          retry bash -c 'set -o pipefail; make download -j$(nproc) V=s 2>&1 | tee logs/download.log'
+          
+          if ! make -j$(nproc) BUILD_LOG=1 2>&1 | tee logs/build.log; then
+            echo "⚠️ [FAIL] Fast build failed, switching to single-thread debug build..."
+            rm -rf tmp build_dir
+            make -j1 V=s BUILD_LOG=1 2>&1 | tee logs/build-debug.log || exit 1
           fi
           
+          ccache -s > logs/ccache.info
+          ccache -p >> logs/ccache.info
+          
+      - name: Cleanup & Save Cache
+        if: always() && !cancelled()
+        run: |
+          find openwrt/dl -type f -size -4k -delete
+          sync
+        
       - name: Save Cache
         uses: actions/cache/save@v4
-        if: success() && !cancelled()
+        if: always() && !cancelled()
         with:
           path: |
             openwrt/dl
+            ~/.ccache
           key: ${{ steps.var.outputs.dl_key }}
 
-      - name: Validate & Final SBOM
+      - name: Validate & Final Packaging
         run: |
-          set -euo pipefail
-          cd openwrt
+          ROOT="$(pwd)"
+          cd openwrt/bin/targets/x86/64/
+          shopt -s nullglob; files=(*combined*.img.gz); [ ${#files[@]} -eq 0 ] && exit 1; shopt -u nullglob
+          for f in *combined*.img.gz; do gunzip -t "$f" || exit 1; done
           
-          cd bin/targets/x86/64/
+          [ ! -f "sha256sums" ] && exit 1
+          sha256sum --ignore-missing -c sha256sums
           
-          FIRMWARE_COUNT=$(find . -name "*combined*.img.gz" -type f | wc -l)
-          if [ "$FIRMWARE_COUNT" -eq 0 ]; then
-            echo "::error title=Firmware Missing::❌ 未檢測到 *combined*.img.gz 產物，編譯可能已嚴重損壞，中斷發布！"
-            exit 1
-          fi
-          if [ ! -f "sha256sums" ]; then
-            echo "::error title=Checksums Missing::❌ 未檢測到 sha256sums 檔案，目標映像命名可能已改變，中斷發布！"
-            exit 1
-          fi
-          echo "✅ 檢測到 $FIRMWARE_COUNT 個韌體映像檔與校驗檔，準備發布。"
+          find . -name "*combined*.img.gz" -type f -print0 | sort -z | xargs -0 sha256sum > manifest.txt
+          mv manifest.txt "$ROOT/openwrt/logs/"
+          cd "$ROOT/openwrt/"
           
-          find . -name "*combined*.img.gz" -type f | sort | \
-            xargs sha256sum > manifest.txt || true
-          sha256sum --ignore-missing -c sha256sums || true
-          mv manifest.txt ../../../../logs/ || true
+          find bin/packages -type f -name "APKINDEX*" > logs/apk-indexes.log || true
+          find bin/packages -type f -name "*luci-i18n*.apk" > logs/luci-i18n-packages.log || true
           
-          cd ../../../../
+          [ -d logs ] && find logs -type f -size 0 -delete
+          [ -f logs/build.log ] && gzip -9f logs/build.log
+          [ -f logs/build-debug.log ] && gzip -9f logs/build-debug.log
           
-          find bin/packages -type f \( -name "APKINDEX*" -o -name "Packages*" \) > logs/apk-indexes.log || true
-          head -n 30 logs/apk-indexes.log
+          pkg_logs=$(find logs -maxdepth 1 -type d -name "package*" -print -quit)
+          [ -n "$pkg_logs" ] && tar -czf logs/package-logs.tar.gz -C logs "$(basename "$pkg_logs")"
           
-          find bin/packages -type f -name "*luci-i18n*" > logs/luci-i18n-packages.log || true
-          head -n 30 logs/luci-i18n-packages.log
+          cat << EOF > logs/build-info.txt
+          Build Date: $(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          Workflow Run ID: ${{ github.run_id }}
+          Runner OS: ${ImageOS:-unknown}
+          Runner Version: ${ImageVersion:-unknown}
+          ImmortalWrt Commit: $(git -C . rev-parse HEAD)
+          PassWall Commit: $(git -C package/openwrt-passwall rev-parse HEAD)
+          Kernel: $(uname -r)
+          OpenWrt Kernel: $(make -s kernelversion)
+          GCC: $(gcc --version | head -n1)
+          Clang: $(clang --version | head -n1)
+          Go: $(go version)
+          CCache Version: $(ccache --version | head -n1)
+          Hardware Info:
+          - CPU: $(lscpu | grep "Model name" | cut -d: -f2 | xargs)
+          - Memory: $(free -h | awk '/^Mem:/ {print $2}')
+          - Disk: $(df -h . | awk 'NR==2 {print $2}')
+          EOF
+          
+          mkdir -p release_assets
+          find bin/targets/x86/64 -name "*combined*.img.gz" -exec install -m644 {} release_assets/ \;
+          [ -f bin/targets/x86/64/sha256sums ] && install -m644 bin/targets/x86/64/sha256sums release_assets/
+          [ -f bin/targets/x86/64/profiles.json ] && jq . bin/targets/x86/64/profiles.json > /dev/null && install -m644 bin/targets/x86/64/profiles.json release_assets/
+          install -m644 .config release_assets/.config
+          
+          for log in manifest.txt diffconfig.txt full.config.gz build.log.gz build-debug.log.gz package-logs.tar.gz apk-indexes.log luci-i18n-packages.log snapshot.sbom toolchain.info ccache.info build-info.txt defconfig.log download.log; do
+            [ -s "logs/$log" ] && install -m644 "logs/$log" release_assets/
+          done
+          install -m644 logs/snapshot.sbom release_assets/feeds.snapshot
+          [ -f ../feeds-install.log ] && install -m644 ../feeds-install.log release_assets/feeds-install.log
           
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: STABLE-b${{ github.run_number }}-${{ steps.var.outputs.date }}
+          tag_name: STABLE-b${{ github.run_number }}-${{ steps.meta.outputs.date }}
           name: ImmWrt 25.12.0 (穩定正式版)
-          body: |
-            ### 🛡️ ImmWrt 25.12.0 (穩定正式版)
-            - **系統基底**：鎖定 `25.12.0` 主線架構，部署工業級安全防禦與極致空間壓榨 (`-j$(nproc)`, `4G Swap`, 精簡 APT 依賴)。
-            - **空投防護**：搭載雙重 Fail-fast 阻斷機制 (映像與 Checksum 校驗)。
-            - **全景可觀測性**：全量診斷日誌已匯出至附件。
-          files: |
-            openwrt/bin/targets/x86/64/*combined*.img.gz
-            openwrt/bin/targets/x86/64/sha256sums
-            openwrt/logs/manifest.txt
-            openwrt/logs/snapshot.sbom
-            openwrt/logs/diffconfig.txt
-            openwrt/logs/full.config.gz
-            openwrt/logs/selected-packages.log
-            openwrt/logs/passwall-language.log
-            openwrt/logs/apk-indexes.log
-            openwrt/logs/luci-i18n-packages.log
-            openwrt/logs/build.log
-            # 🚨 修正：移除會引發 0 byte 錯誤的 build-debug.log
+          files: openwrt/release_assets/*
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
