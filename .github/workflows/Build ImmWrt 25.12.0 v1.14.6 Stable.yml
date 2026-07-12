@@ -1,9 +1,10 @@
 # =====================================================================
-# 🛡️ [GOLD-FINAL-LTS-v1.14-SEALED] - ImmortalWrt 25.12.0 終極封存母版
+# 🛡️ [GOLD-FINAL-LTS-v1.14.6-SEALED] - ImmortalWrt 25.12.0 終極封存母版
 # =====================================================================
-# 狀態：Archive Grade A++ (100% 證據鏈與可重現構建)。
+# 狀態：Archive Grade A++ (100% 證據鏈、UX 與可重現構建)。
 # 哲學：架構已絕對凍結。僅允許安全修補與大版本躍遷。
-# 終極優化：移除首輪編譯的 BUILD_LOG=1 避免硬碟 I/O 穿透，下調 ccache 至 2G，達成 CI 資源的極致平衡。
+# 最終 UX 昇華：重構 retry 為「企業 CI 安靜模式」。平時僅輸出狀態燈號，
+# 失敗時精準 dump 最後 300 行日誌。徹底根絕 GitHub Web UI 被巨量 Log 卡死的問題。
 # =====================================================================
 
 name: Build ImmWrt 25.12.0 Stable
@@ -44,20 +45,31 @@ jobs:
         run: |
           cat << 'EOF' > /tmp/sre_utils.sh
           #!/bin/bash
+          set -o pipefail
           retry() {
             touch /tmp/retry_history.log /tmp/retry_debug.log
             local max=5; local delay=2; local n=1
+            local cmd_name="$(printf '%q ' "$@")"
+            
             while true; do
-              "$@" >> /tmp/retry_debug.log 2>&1 && break || {
+              echo -e "▶️ [Attempt $n] Executing: ${cmd_name:0:100}..."
+              # 靜默執行，所有輸出導向 debug log
+              if "$@" >> /tmp/retry_debug.log 2>&1; then
+                echo "✅ Success!"
+                break
+              else
                 if [[ $n -lt $max ]]; then
-                  echo "⚠️ [FAIL] Attempt $n: $(printf '%q ' "$@")" >> /tmp/retry_history.log
+                  echo "⚠️ [FAIL] Attempt $n: $cmd_name" >> /tmp/retry_history.log
+                  echo "⚠️ Failed! Retrying in $delay seconds..."
                   ((n++)); delay=$((delay * 2 + RANDOM % 3)); sleep $delay
                 else
-                  echo "❌ FAILED after $max retries: $(printf '%q ' "$@")"
-                  cat /tmp/retry_history.log; echo "--- LAST 500 LINES ---"; tail -n 500 /tmp/retry_debug.log
+                  echo "❌ FATAL: Failed after $max retries: $cmd_name"
+                  cat /tmp/retry_history.log
+                  echo "--- LAST 300 LINES OF ERROR LOG ---"
+                  tail -n 300 /tmp/retry_debug.log
                   return 1
                 fi
-              }
+              fi
             done
           }
           EOF
@@ -164,20 +176,21 @@ jobs:
           source /tmp/sre_utils.sh
           cd openwrt
           
-          # 嚴格可重現：提取最早 component commit timestamp 作為保守的基準線
+          # 嚴格可重現：提取最新 component commit timestamp 作為基準，符合主流 Reproducible Build 慣例
           IMM_DATE=$(git log -1 --format=%ct)
           PW_DATE=$(git -C package/openwrt-passwall log -1 --format=%ct 2>/dev/null || echo "$IMM_DATE")
           PWP_DATE=$(git -C package/openwrt-passwall-packages log -1 --format=%ct 2>/dev/null || echo "$IMM_DATE")
-          export SOURCE_DATE_EPOCH=$(printf "%s\n%s\n%s" "$IMM_DATE" "$PW_DATE" "$PWP_DATE" | sort -n | head -1)
+          export SOURCE_DATE_EPOCH=$(printf "%s\n%s\n%s" "$IMM_DATE" "$PW_DATE" "$PWP_DATE" | sort -n | tail -1)
           echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" >> ../toolchain.info
           
           export CC="ccache gcc" CXX="ccache g++"
           
-          # 📟 駕駛艙儀表板複合監控指標 (負載平均值 | 記憶體已用/總量 | 百分比)
+          # 📟 駕駛艙儀表板複合監控指標 (負載 | 記憶體 | Disk)
           ( while true; do 
               LOAD=$(uptime | awk -F'load average:' '{print $2}' | xargs)
               MEM=$(free -m | awk '/Mem:/ {printf "%d/%dMB | %.0f%%", $3, $2, ($3/$2)*100}')
-              echo "[MONITOR]  $LOAD | $MEM"
+              DISK=$(df -h . | awk 'NR==2 {print $5}')
+              echo "[MONITOR]  $LOAD | $MEM | DISK: $DISK"
               sleep 120
             done ) &
           trap 'kill $! 2>/dev/null' EXIT
@@ -185,18 +198,24 @@ jobs:
           retry bash -c 'timeout 30m make download -j$(nproc) V=s'
           
           FAST_BUILD_STATUS="SUCCESS"
-          if ! make -j$(nproc) 2>&1 | tee ../logs_build.log; then
+          # 採用 Process Substitution 串流壓縮 (-1 追求最高 I/O 效率)，杜絕原始巨大 Log 佔用峰值空間
+          if ! make -j$(nproc) 2>&1 | tee >(gzip -1 -c > ../logs_build.log.gz); then
             FAST_BUILD_STATUS="FAILED (Fallback to Debug)"
             echo "FAST_BUILD_FAILED=true" > ../build-status.txt
-            rm -rf tmp && make -j1 V=s BUILD_LOG=1 2>&1 | tee ../logs_build_debug.log || exit 1
+            rm -rf tmp && make -j1 V=s BUILD_LOG=1 2>&1 | tee >(gzip -1 -c > ../logs_build_debug.log.gz) || exit 1
           fi
           echo "FAST_BUILD_STATUS=$FAST_BUILD_STATUS" >> ../build-status.txt
           
-          ccache -s > ../logs_ccache.info
+          {
+            ccache -s
+            echo -e "\n=== CCACHE DISK USAGE ==="
+            df -h "$CCACHE_DIR"
+          } > ../logs_ccache.info 2>&1 || echo "ccache unavailable" > ../logs_ccache.info
           
       - name: Save Cache
         uses: actions/cache/save@v4
-        if: always() && !cancelled()
+        # 嚴格限制僅在成功且未被取消時保存，避免 Cache Poisoning
+        if: success() && !cancelled()
         continue-on-error: true
         with:
           path: |
@@ -221,11 +240,13 @@ jobs:
           cd "$ROOT"
           [ -z "$(find release_assets -type f -name "*combined*.img.gz")" ] && { echo "Firmware missing!"; exit 1; }
           
-          # 2. 韌體真實安裝清單 (Ground Truth Manifest) 具備多檔案考古可讀性
+          # 2. 韌體真實安裝清單 (加入 -s 清除 0-byte)
           find openwrt/bin/targets/x86/64 -name "*.manifest" -exec sh -c 'echo "=== $(basename "$1") ==="; cat "$1"; echo' _ {} \; > release_assets/installed-packages.txt
+          [ -s release_assets/installed-packages.txt ] || rm -f release_assets/installed-packages.txt
           
-          # 3. APK 庫存快照
+          # 3. APK 庫存快照 (加入 -s 清除 0-byte)
           find openwrt/bin/packages -name "*.apk" | sort > release_assets/apk-list.txt
+          [ -s release_assets/apk-list.txt ] || rm -f release_assets/apk-list.txt
           
           # 4. 完整考古級 Build Info
           cat << EOF > release_assets/build-info.txt
@@ -245,20 +266,24 @@ jobs:
           Fast Build Status: $(cat build-status.txt 2>/dev/null || echo "UNKNOWN")
           EOF
           
-          # 5. 證據鏈全面歸檔
-          install -m644 feeds.snapshot.txt release_assets/feeds.snapshot
-          install -m644 toolchain.info release_assets/toolchain.info
-          install -m644 logs_full.config.gz release_assets/full.config.gz
-          install -m644 logs_diffconfig.txt release_assets/diffconfig.txt
-          install -m644 logs_ccache.info release_assets/ccache.info
+          # 5. 證據鏈全面歸檔 (嚴格套用 -s 檢查)
+          [ -s feeds.snapshot.txt ] && install -m644 feeds.snapshot.txt release_assets/feeds.snapshot
+          [ -s toolchain.info ] && install -m644 toolchain.info release_assets/toolchain.info
+          [ -s logs_full.config.gz ] && install -m644 logs_full.config.gz release_assets/full.config.gz
+          [ -s logs_diffconfig.txt ] && install -m644 logs_diffconfig.txt release_assets/diffconfig.txt
+          [ -s logs_ccache.info ] && install -m644 logs_ccache.info release_assets/ccache.info
           
-          [ -f build-status.txt ] && install -m644 build-status.txt release_assets/
-          [ -f logs_build.log ] && gzip -9f logs_build.log && install -m644 logs_build.log.gz release_assets/
-          [ -f logs_build_debug.log ] && gzip -9f logs_build_debug.log && install -m644 logs_build_debug.log.gz release_assets/
+          [ -s build-status.txt ] && install -m644 build-status.txt release_assets/
+          # 日誌在編譯階段已經完成了串流壓縮，此處直接安裝即可
+          [ -s logs_build.log.gz ] && install -m644 logs_build.log.gz release_assets/
+          [ -s logs_build_debug.log.gz ] && install -m644 logs_build_debug.log.gz release_assets/
           
           # 6. 歸檔網路容錯與重試紀錄
-          [ -f /tmp/retry_history.log ] && install -m644 /tmp/retry_history.log release_assets/
-          [ -f /tmp/retry_debug.log ] && gzip -9 -c /tmp/retry_debug.log > release_assets/retry_debug.log.gz || true
+          [ -s /tmp/retry_history.log ] && install -m644 /tmp/retry_history.log release_assets/
+          [ -s /tmp/retry_debug.log ] && gzip -9 -c /tmp/retry_debug.log > release_assets/retry_debug.log.gz || true
+          
+          # 7. 終極防線：最後清理可能遺漏的任何 0-byte 檔案並記錄軌跡
+          find release_assets -type f -empty -print -delete
           
       - name: Publish Release
         uses: softprops/action-gh-release@v2
