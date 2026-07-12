@@ -3,7 +3,7 @@
 # =====================================================================
 # 狀態：Archive Grade A++ (100% 證據鏈、UX 與可重現構建)。
 # 哲學：架構已絕對凍結。遵循「無報錯絕不更動」之 LTS 開放-封閉原則。
-# v2.0 手術：實施「雙重保險定點抹除法」，從底層與前端無情拔除「掛載點」與「插件」選單。
+# v2.0 修正：復刻 7.0 黃金語意，精準定點拔除「掛載點」與「插件」底層套件與前端 UI 節點。
 # =====================================================================
 
 name: Build ImmWrt 25.12.0 Stable
@@ -104,14 +104,15 @@ jobs:
           retry git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/openwrt-passwall
           retry bash -c 'set -o pipefail; timeout 20m ./scripts/feeds install -a -f'
           
-          # 🚀 v2.0 雙重保險定點抹除法 (掛載點 & 插件)
-          ./scripts/feeds uninstall luci-app-fstab || true
-          rm -rf feeds/luci/applications/luci-app-fstab
-          rm -rf package/feeds/luci/luci-app-fstab
-          # 掃描並刪除前端選單中的「掛載點」與「插件」節點
-          find feeds/luci -name "*.json" -type f -exec sh -c '
-            jq "del(.[\"admin/system/mounts\"], .[\"admin/services/mounts\"], .[\"admin/system/plugins\"])" "$1" > "$1.tmp" && mv "$1.tmp" "$1" || true
-          ' _ {} \;
+          # 🚀 v2.0 雙重保險定點抹除手術 (掛載點 & 插件)
+          ./scripts/feeds uninstall luci-app-fstab luci-app-plugins || true
+          rm -rf feeds/luci/applications/luci-app-fstab feeds/luci/applications/luci-app-plugins
+          rm -rf package/feeds/luci/luci-app-fstab package/feeds/luci/luci-app-plugins
+          
+          # 完美復刻 7.0 黃金定點抹除語法，全域精準破壞前端選單殘留節點
+          find feeds package -path "*/usr/share/luci/menu.d/*.json" -type f | while read -r f; do
+            jq 'del(."admin/system/mounts", ."admin/services/mounts", ."admin/system/plugins")' "$f" > "$f.tmp" && mv "$f.tmp" "$f" || true
+          done
           
           # 結構化 SBOM 生成
           {
@@ -176,6 +177,7 @@ jobs:
           CONFIG_CCACHE=y
           CONFIG_PACKAGE_block-mount=n
           CONFIG_PACKAGE_luci-app-fstab=n
+          CONFIG_PACKAGE_luci-app-plugins=n
           EOF
           make defconfig && ./scripts/diffconfig.sh > ../logs_diffconfig.txt
           gzip -9f -c .config > ../logs_full.config.gz
