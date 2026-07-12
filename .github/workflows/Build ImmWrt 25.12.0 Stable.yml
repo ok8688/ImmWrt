@@ -3,7 +3,7 @@
 # =====================================================================
 # 狀態：基於 25.12.0 正式版架構，鎖定主線 (master) 穩定構建。
 # 核心：維持 CONFIG_PACKAGE_luci=y，驅動 CONFIG_LUCI_LANG_zh_Hans。
-# 終極修正：極致 apt 空間釋放、雙重產物空投阻斷 (combined & sha256sums)。
+# 終極修正：極致 apt 空間釋放、雙重產物空投阻斷、修復 0-byte 日誌導致的發布失敗。
 # =====================================================================
 
 name: Build ImmWrt 25.12.0 Stable
@@ -85,7 +85,6 @@ jobs:
             
           sudo docker system prune -af || true
           sudo apt-get clean
-          # 採納大師微優化：徹底清空 apt 快取清單，榨乾最後一滴可用空間
           sudo rm -rf /var/lib/apt/lists/*
           
           echo "=== 🚀 部署依賴與內存裝甲 (精簡模式) ==="
@@ -114,7 +113,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends python3-distutils || true
             
           sudo swapoff -a || true
-          # 4G Swap 甜蜜點，防禦 OOM 且避免 IO 顛簸
           sudo fallocate -l 4G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
@@ -132,13 +130,11 @@ jobs:
         run: |
           set -euo pipefail
           source /tmp/sre_utils.sh
-          # 🚀 鎖定主線源碼 (depth=1 節省大量 IO 與時間)
           retry git clone --depth=1 -b master https://github.com/immortalwrt/immortalwrt.git openwrt
           cd openwrt
           
           retry ./scripts/feeds update -a
           
-          # ✅ 物理防護 - 徹底切斷舊版供應鏈
           rm -rf feeds/luci/applications/luci-app-passwall
           rm -rf feeds/packages/net/xray-core
           rm -rf feeds/packages/net/sing-box
@@ -146,7 +142,6 @@ jobs:
           rm -rf package/feeds/packages/xray-core
           rm -rf package/feeds/packages/sing-box
           
-          # 🚀 拉取官方最新 PassWall
           retry git clone --depth=1 \
             https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git \
             package/openwrt-passwall-packages
@@ -156,7 +151,6 @@ jobs:
             
           retry ./scripts/feeds install -a -f
 
-          # 🚀 黃金定點抹除法 (掛載點)
           ./scripts/feeds uninstall luci-app-fstab || true
           rm -rf feeds/luci/applications/luci-app-fstab
           rm -rf package/feeds/luci/luci-app-fstab
@@ -182,7 +176,6 @@ jobs:
           cd openwrt
           mkdir -p logs
           
-          # 🇨🇳 UCI 保險機制，鎖定 zh_cn
           mkdir -p files/etc/uci-defaults
           cat << 'EOF' > files/etc/uci-defaults/99-force-language
           #!/bin/sh
@@ -192,9 +185,6 @@ jobs:
           EOF
           chmod +x files/etc/uci-defaults/99-force-language
           
-          # ==========================================================
-          # ⚙️ 核心套件清單 (全局語言主控變數)
-          # ==========================================================
           {
             echo "CONFIG_TARGET_x86=y"
             echo "CONFIG_TARGET_x86_64=y"
@@ -243,9 +233,6 @@ jobs:
           } > .config
           make defconfig
           
-          # ==========================================================
-          # 🚨 工業級 SRE 測試左移：精準依賴掃描與配置導出
-          # ==========================================================
           echo "===== 🕵️‍♂️ SRE FINAL CHECK: LUCI LANG ====="
           grep "LUCI_LANG" .config || true
           
@@ -289,9 +276,6 @@ jobs:
             cp feeds.snapshot.txt logs/snapshot.sbom || true
           export SOURCE_DATE_EPOCH=$(git log -1 --format=%ct || date +%s)
           
-          # ==========================================
-          # 📡 啟動 SRE 駕駛艙雷達
-          # ==========================================
           MONITOR_PID=""
           cleanup_monitor() {
             echo "🧹 關閉駕駛艙雷達..."
@@ -308,9 +292,6 @@ jobs:
             done
           ) &
           MONITOR_PID=$!
-          # ==========================================
-          
-          touch logs/build-debug.log
           
           for i in 1 2 3; do
             make download -j$(nproc) && break || {
@@ -338,12 +319,8 @@ jobs:
           set -euo pipefail
           cd openwrt
           
-          # =========================================================================
-          # 📡 產物遙測與空投阻斷 (Pre-Release Check)
-          # =========================================================================
           cd bin/targets/x86/64/
           
-          # 採納大師雙重阻斷：韌體與 Checksum 皆不可或缺
           FIRMWARE_COUNT=$(find . -name "*combined*.img.gz" -type f | wc -l)
           if [ "$FIRMWARE_COUNT" -eq 0 ]; then
             echo "::error title=Firmware Missing::❌ 未檢測到 *combined*.img.gz 產物，編譯可能已嚴重損壞，中斷發布！"
@@ -362,11 +339,9 @@ jobs:
           
           cd ../../../../
           
-          # 搜尋 APKINDEX 與 Packages 中繼資料
           find bin/packages -type f \( -name "APKINDEX*" -o -name "Packages*" \) > logs/apk-indexes.log || true
           head -n 30 logs/apk-indexes.log
           
-          # 直接狙擊實體的 luci-i18n 檔案
           find bin/packages -type f -name "*luci-i18n*" > logs/luci-i18n-packages.log || true
           head -n 30 logs/luci-i18n-packages.log
           
@@ -378,8 +353,8 @@ jobs:
           body: |
             ### 🛡️ ImmWrt 25.12.0 (穩定正式版)
             - **系統基底**：鎖定 `25.12.0` 主線架構，部署工業級安全防禦與極致空間壓榨 (`-j$(nproc)`, `4G Swap`, 精簡 APT 依賴)。
-            - **空投防護**：搭載雙重 Fail-fast 阻斷機制 (映像與 Checksum 校驗)，確保發布產物絕對可用。
-            - **全景可觀測性**：配置環境已無損壓縮打包，全量診斷日誌已匯出至附件，編譯失敗可直查 `build-debug.log`。
+            - **空投防護**：搭載雙重 Fail-fast 阻斷機制 (映像與 Checksum 校驗)。
+            - **全景可觀測性**：全量診斷日誌已匯出至附件。
           files: |
             openwrt/bin/targets/x86/64/*combined*.img.gz
             openwrt/bin/targets/x86/64/sha256sums
@@ -392,6 +367,6 @@ jobs:
             openwrt/logs/apk-indexes.log
             openwrt/logs/luci-i18n-packages.log
             openwrt/logs/build.log
-            openwrt/logs/build-debug.log
+            # 🚨 修正：移除會引發 0 byte 錯誤的 build-debug.log
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
