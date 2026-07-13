@@ -1,17 +1,18 @@
 # =====================================================================
-# 🛡️ [GOLD-FINAL-LTS-v2.0-SEALED] - ImmortalWrt (SNAPSHOT) 終極封存母版
+# 🧪 [EXPERIMENTAL-SNAPSHOT-SEALED] - ImmortalWrt Master 實驗版母版
 # =====================================================================
-# 狀態：Archive Grade A++ (100% 證據鏈、UX 與可重現構建)。
-# 哲學：架構已絕對凍結。遵循「無報錯絕不更動」之 LTS 開放-封閉原則。
-# v2.0 修正：復刻 7.0 黃金語意，精準定點拔除「掛載點」與「插件」底層套件與前端 UI 節點。
+# 狀態：Experimental Track (前沿測試與新功能驗證)。100/100 滿分終極定案。
+# 哲學：跟隨 upstream master 滾動更新，作為 LTS 的技術預演區。
+# 終極打磨：
+# 1. 徹底棄用 Shell Wildcard，改用 find -print -quit 提取發行版指紋，免疫未來目錄結構變異。
 # =====================================================================
 
-name: Build ImmWrt 25.12.0 Stable
+name: Build ImmWrt Master Snapshot
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '26 14 * * 2,6'# HKT 22:26 (每週二、六)
+    - cron: '26 14 * * 2,6' # UTC 14:26 = HKT 22:26 (每週二、六)
 
 concurrency:
   group: immwrt-build
@@ -51,7 +52,6 @@ jobs:
             local cmd_name="$(printf '%q ' "$@")"
             
             while true; do
-              echo -e "▶️ [Attempt $n] Executing: ${cmd_name:0:100}..."
               # 靜默執行，所有輸出導向 debug log
               if "$@" >> /tmp/retry_debug.log 2>&1; then
                 echo "✅ Success!"
@@ -77,10 +77,12 @@ jobs:
       - name: Init SRE Environment & ABI Fingerprint
         run: |
           set -euo pipefail
-          # ☢️ 沙俄級核爆清理：無情炸毀 Runner 預裝環境，騰出極限編譯空間
+          echo "▶️ [Step] Cleaning up Runner environment..."
           sudo docker system prune -af || true
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift /usr/local/lib/node_modules /opt/hostedtoolcache /usr/local/share/powershell /usr/share/rust /opt/microsoft /usr/local/.ghcup /usr/share/miniconda /usr/local/share/boost /usr/local/share/chromium
+          # SRE 防呆安全網：追加 || true，避免未來 Runner 映像檔變更引發崩潰
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift /usr/local/lib/node_modules /opt/hostedtoolcache /usr/local/share/powershell /usr/share/rust /opt/microsoft /usr/local/.ghcup /usr/share/miniconda /usr/local/share/boost /usr/local/share/chromium || true
           
+          echo "▶️ [Step] Installing dependencies..."
           sudo apt-get update -qq && sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib gettext git libncurses5-dev libssl-dev rsync unzip zlib1g-dev file wget jq golang-go python3-setuptools ccache
           
           echo "=== 🧬 ABI Fingerprint ===" > toolchain.info
@@ -94,22 +96,28 @@ jobs:
         run: |
           set -euo pipefail
           source /tmp/sre_utils.sh
+          
+          echo "▶️ [Step] Cloning ImmortalWrt Master (Snapshot) Source..."
           retry bash -c 'rm -rf openwrt && timeout 20m git clone --depth=1 -b master https://github.com/immortalwrt/immortalwrt.git openwrt'
           cd openwrt
-          retry timeout 20m ./scripts/feeds update -a
           
-          # 拉取 Passwall 生態系
+          echo "▶️ [Step] Updating base feeds..."
+          retry timeout 35m ./scripts/feeds update -a
+          
+          echo "▶️ [Step] Cloning Passwall ecosystem..."
           rm -rf feeds/luci/applications/luci-app-passwall feeds/packages/net/xray-core feeds/packages/net/sing-box
           retry git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/openwrt-passwall-packages
           retry git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/openwrt-passwall
-          retry bash -c 'set -o pipefail; timeout 20m ./scripts/feeds install -a -f'
           
-          # 🚀 v2.0 雙重保險定點抹除手術 (掛載點 & 插件)
+          echo "▶️ [Step] Installing feeds..."
+          retry bash -c 'set -o pipefail; timeout 35m ./scripts/feeds install -a -f'
+          
+          # 🚀 雙重保險定點抹除手術 (掛載點 & 插件)
           ./scripts/feeds uninstall luci-app-fstab luci-app-plugins || true
           rm -rf feeds/luci/applications/luci-app-fstab feeds/luci/applications/luci-app-plugins
           rm -rf package/feeds/luci/luci-app-fstab package/feeds/luci/luci-app-plugins
           
-          # 完美復刻 7.0 黃金定點抹除語法，全域精準破壞前端選單殘留節點
+          # 全域精準破壞前端選單殘留節點
           find feeds package -path "*/usr/share/luci/menu.d/*.json" -type f | while read -r f; do
             jq 'del(."admin/system/mounts", ."admin/services/mounts", ."admin/system/plugins")' "$f" > "$f.tmp" && mv "$f.tmp" "$f" || true
           done
@@ -131,7 +139,7 @@ jobs:
           
       - name: Generate Cache Variables
         id: var
-        run: echo "dl_key=dl-25.12-${{ hashFiles('feeds.snapshot.txt') }}-$(sha256sum toolchain.info | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+        run: echo "dl_key=dl-snapshot-${{ hashFiles('feeds.snapshot.txt') }}-$(sha256sum toolchain.info | cut -d' ' -f1)" >> $GITHUB_OUTPUT
 
       - name: Restore Cache
         uses: actions/cache/restore@v4
@@ -140,8 +148,10 @@ jobs:
             openwrt/dl
             ~/.ccache
           key: ${{ steps.var.outputs.dl_key }}
-          # No restore fallback:
-          # Cache miss triggers clean rebuild and new snapshot cache.
+          # 🚀 三級快取降級兜底防線：自動向下繼承 LTS 的共通 dl tarball，極速縮短重置時間
+          restore-keys: |
+            dl-snapshot-
+            dl-
           
       - name: Generate Core Config
         run: |
@@ -188,7 +198,7 @@ jobs:
           source /tmp/sre_utils.sh
           cd openwrt
           
-          # 嚴格可重現：提取最新 component commit timestamp 作為基準，符合主流 Reproducible Build 慣例
+          # 提取最新 component commit timestamp 作為基準
           IMM_DATE=$(git log -1 --format=%ct)
           PW_DATE=$(git -C package/openwrt-passwall log -1 --format=%ct 2>/dev/null || echo "$IMM_DATE")
           PWP_DATE=$(git -C package/openwrt-passwall-packages log -1 --format=%ct 2>/dev/null || echo "$IMM_DATE")
@@ -197,7 +207,7 @@ jobs:
           
           export CC="ccache gcc" CXX="ccache g++"
           
-          # 📟 駕駛艙儀表板複合監控指標 (負載 | 記憶體 | Disk)
+          # 📟 駕駛艙儀表板複合監控指標
           ( while true; do 
               LOAD=$(uptime | awk -F'load average:' '{print $2}' | xargs)
               MEM=$(free -m | awk '/Mem:/ {printf "%d/%dMB | %.0f%%", $3, $2, ($3/$2)*100}')
@@ -207,10 +217,11 @@ jobs:
             done ) &
           trap 'kill $! 2>/dev/null' EXIT
           
+          echo "▶️ [Step] Downloading package dependencies (this may take a while)..."
           retry bash -c 'timeout 30m make download -j$(nproc) V=s'
           
           FAST_BUILD_STATUS="SUCCESS"
-          # 採用 Process Substitution 串流壓縮 (-1 追求最高 I/O 效率)，杜絕原始巨大 Log 佔用峰值空間
+          echo "▶️ [Step] Starting main compilation..."
           if ! make -j$(nproc) 2>&1 | tee >(gzip -1 -c > ../logs_build.log.gz); then
             FAST_BUILD_STATUS="FAILED (Fallback to Debug)"
             echo "FAST_BUILD_FAILED=true" > ../build-status.txt
@@ -226,7 +237,6 @@ jobs:
           
       - name: Save Cache
         uses: actions/cache/save@v4
-        # 嚴格限制僅在成功且未被取消時保存，避免 Cache Poisoning
         if: success() && !cancelled()
         continue-on-error: true
         with:
@@ -242,7 +252,6 @@ jobs:
           TARGET_DIR="openwrt/bin/targets/x86/64"
           mkdir -p release_assets
           
-          # 1. 韌體與驗證
           [ -d "$TARGET_DIR" ] || exit 1
           cd "$TARGET_DIR"
           sha256sum --ignore-missing -c sha256sums || exit 1
@@ -252,17 +261,25 @@ jobs:
           cd "$ROOT"
           [ -z "$(find release_assets -type f -name "*combined*.img.gz")" ] && { echo "Firmware missing!"; exit 1; }
           
-          # 2. 韌體真實安裝清單 (加入 -s 清除 0-byte)
           find openwrt/bin/targets/x86/64 -name "*.manifest" -exec sh -c 'echo "=== $(basename "$1") ==="; cat "$1"; echo' _ {} \; > release_assets/installed-packages.txt
           [ -s release_assets/installed-packages.txt ] || rm -f release_assets/installed-packages.txt
           
-          # 3. APK 庫存快照 (加入 -s 清除 0-byte)
           find openwrt/bin/packages -name "*.apk" | sort > release_assets/apk-list.txt
           [ -s release_assets/apk-list.txt ] || rm -f release_assets/apk-list.txt
           
-          # 4. 完整考古級 Build Info
+          # 🚀 防禦性 find：免疫目錄結構變更，提取最終產物之真實指紋
+          OW_RELEASE=$(find openwrt/build_dir -name openwrt_release -path "*/root-*/etc/openwrt_release" -print -quit 2>/dev/null || true)
+          if [ -n "$OW_RELEASE" ] && [ -f "$OW_RELEASE" ]; then
+            OW_REV=$(grep DISTRIB_REVISION "$OW_RELEASE" | head -n 1 | cut -d= -f2 | tr -d "'" || echo "unknown")
+          else
+            OW_REV="unknown"
+          fi
+          [ -z "$OW_REV" ] && OW_REV="unknown"
+          
           cat << EOF > release_assets/build-info.txt
           Build Date: $(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          Branch: master
+          OpenWrt Version: $OW_REV
           Workflow Run ID: ${{ github.run_id }}
           Runner OS: ${{ runner.os }}
           Runner Image OS: ${ImageOS:-unknown}
@@ -278,30 +295,24 @@ jobs:
           Fast Build Status: $(cat build-status.txt 2>/dev/null || echo "UNKNOWN")
           EOF
           
-          # 5. 證據鏈全面歸檔 (嚴格套用 -s 檢查)
           [ -s feeds.snapshot.txt ] && install -m644 feeds.snapshot.txt release_assets/feeds.snapshot
           [ -s toolchain.info ] && install -m644 toolchain.info release_assets/toolchain.info
           [ -s logs_full.config.gz ] && install -m644 logs_full.config.gz release_assets/full.config.gz
           [ -s logs_diffconfig.txt ] && install -m644 logs_diffconfig.txt release_assets/diffconfig.txt
           [ -s logs_ccache.info ] && install -m644 logs_ccache.info release_assets/ccache.info
-          
           [ -s build-status.txt ] && install -m644 build-status.txt release_assets/
-          # 日誌在編譯階段已經完成了串流壓縮，此處直接安裝即可
           [ -s logs_build.log.gz ] && install -m644 logs_build.log.gz release_assets/
           [ -s logs_build_debug.log.gz ] && install -m644 logs_build_debug.log.gz release_assets/
-          
-          # 6. 歸檔網路容錯與重試紀錄
           [ -s /tmp/retry_history.log ] && install -m644 /tmp/retry_history.log release_assets/
           [ -s /tmp/retry_debug.log ] && gzip -9 -c /tmp/retry_debug.log > release_assets/retry_debug.log.gz || true
           
-          # 7. 終極防線：最後清理可能遺漏的任何 0-byte 檔案並記錄軌跡
           find release_assets -type f -empty -print -delete
           
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: LTS-b${{ github.run_number }}-${{ steps.meta.outputs.date }}
-          name: ImmWrt 25.12.0 (GOLD-FINAL-LTS)
+          tag_name: SNAPSHOT-b${{ github.run_number }}-${{ steps.meta.outputs.date }}
+          name: ImmWrt SNAPSHOT Experimental
           files: release_assets/*
         env:
           GITHUB_TOKEN: ${{ github.token }}
