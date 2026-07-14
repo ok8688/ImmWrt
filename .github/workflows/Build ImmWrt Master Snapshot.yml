@@ -4,7 +4,7 @@
 # 狀態：Experimental Track (前沿測試與新功能驗證)。100/100 滿分終極定案。
 # 哲學：跟隨 upstream master 滾動更新，作為 LTS 的技術預演區。
 # 終極打磨：
-# 1. 於 Core Config 階段後精準注入 16 文件白名單精確備份規格。
+# 1. 徹底棄用 Shell Wildcard，改用 find -print -quit 提取發行版指紋，免疫未來目錄結構變異。
 # =====================================================================
 
 name: Build ImmWrt Master Snapshot
@@ -191,115 +191,6 @@ jobs:
           EOF
           make defconfig && ./scripts/diffconfig.sh > ../logs_diffconfig.txt
           gzip -9f -c .config > ../logs_full.config.gz
-
-      - name: Install ImmWrt Backup Specification v2.0 (Snapshot Track)
-        run: |
-          set -euo pipefail
-
-          # 🛡️ [Snapshot 注釋]：創建預編譯注入目錄，將 16 文件精確白名單備份工具固化於 ROM 中
-          mkdir -p openwrt/files/usr/bin
-
-          cat > openwrt/files/usr/bin/immwrt-backup << 'EOF'
-          #!/bin/sh
-
-          BACKUP=/root/immwrt-backup
-          TAR=/root/immwrt-backup.tar.gz
-
-          backup() {
-
-              rm -rf "$BACKUP"
-              mkdir -p "$BACKUP"
-
-              mkdir -p "$BACKUP/etc/config"
-
-              cp -af /etc/config/argon            "$BACKUP/etc/config/"
-              cp -af /etc/config/ddns             "$BACKUP/etc/config/"
-              cp -af /etc/config/dhcp             "$BACKUP/etc/config/"
-              cp -af /etc/config/firewall         "$BACKUP/etc/config/"
-              cp -af /etc/config/luci             "$BACKUP/etc/config/"
-              cp -af /etc/config/network          "$BACKUP/etc/config/"
-              cp -af /etc/config/passwall         "$BACKUP/etc/config/"
-              cp -af /etc/config/passwall_server  "$BACKUP/etc/config/"
-              cp -af /etc/config/smartdns         "$BACKUP/etc/config/"
-              cp -af /etc/config/system           "$BACKUP/etc/config/"
-              cp -af /etc/config/upnpd            "$BACKUP/etc/config/"
-
-              mkdir -p "$BACKUP/usr/share/passwall/rules"
-
-              cp -af /usr/share/passwall/rules/direct_host "$BACKUP/usr/share/passwall/rules/"
-              cp -af /usr/share/passwall/rules/direct_ip   "$BACKUP/usr/share/passwall/rules/"
-              cp -af /usr/share/passwall/rules/proxy_host  "$BACKUP/usr/share/passwall/rules/"
-              cp -af /usr/share/passwall/rules/proxy_ip    "$BACKUP/usr/share/passwall/rules/"
-
-              mkdir -p "$BACKUP/etc/crontabs"
-
-              cp -af /etc/crontabs/root "$BACKUP/etc/crontabs/"
-
-              rm -f "$TAR"
-
-              tar -czf "$TAR" -C /root immwrt-backup
-
-              rm -rf "$BACKUP"
-
-              echo
-              echo "Backup finished."
-              echo "$TAR"
-          }
-
-          restore() {
-
-              if [ ! -f "$TAR" ]; then
-                  echo
-                  echo "Backup not found."
-                  exit 1
-              fi
-
-              rm -rf "$BACKUP"
-
-              tar -xzf "$TAR" -C /root
-
-              cp -af "$BACKUP/etc/config/"* /etc/config/
-
-              cp -af "$BACKUP/usr/share/passwall/rules/"* /usr/share/passwall/rules/
-
-              cp -af "$BACKUP/etc/crontabs/root" /etc/crontabs/
-
-              sync
-
-              rm -rf "$BACKUP"
-
-              echo
-              echo "Restore finished."
-              echo "Please reboot."
-          }
-
-          case "$1" in
-
-              backup|b)
-                  backup
-                  ;;
-
-              restore|r)
-                  restore
-                  ;;
-
-              *)
-                  echo
-                  echo "Usage:"
-                  echo
-                  echo "immwrt-backup backup"
-                  echo "immwrt-backup restore"
-                  echo
-                  echo "Shortcut:"
-                  echo
-                  echo "immwrt-backup b"
-                  echo "immwrt-backup r"
-                  ;;
-          esac
-
-          EOF
-
-          chmod +x openwrt/files/usr/bin/immwrt-backup
           
       - name: Build Firmware
         run: |
