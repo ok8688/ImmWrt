@@ -5,6 +5,7 @@
 # 哲學：跟隨 upstream master 滾動更新，作為 LTS 的技術預演區。
 # 終極打磨：
 # 1. 徹底棄用 Shell Wildcard，改用 find -print -quit 提取發行版指紋，免疫未來目錄結構變異。
+# 2. [手術植入] 注入 ib v1.6-LTS 原生備份工具，賦予 SNAPSHOT 原子回滾防護。
 # =====================================================================
 
 name: Build ImmWrt Master Snapshot
@@ -117,9 +118,9 @@ jobs:
           rm -rf feeds/luci/applications/luci-app-fstab feeds/luci/applications/luci-app-plugins
           rm -rf package/feeds/luci/luci-app-fstab package/feeds/luci/luci-app-plugins
           
-          # 全域精準破壞前端選單殘留節點
+          # 全域精準破壞前端選單殘留節點 (增強 JSON 解析防禦)
           find feeds package -path "*/usr/share/luci/menu.d/*.json" -type f | while read -r f; do
-            jq 'del(."admin/system/mounts", ."admin/services/mounts", ."admin/system/plugins")' "$f" > "$f.tmp" && mv "$f.tmp" "$f" || true
+            jq 'del(."admin/system/mounts", ."admin/services/mounts", ."admin/system/plugins") // .' "$f" > "$f.tmp" && mv "$f.tmp" "$f" || echo "⚠️ Skipping invalid JSON: $f"
           done
           
           # 結構化 SBOM 生成
@@ -136,6 +137,230 @@ jobs:
               echo "$(git -C "$repo" remote get-url origin 2>/dev/null):$(git -C "$repo" rev-parse HEAD)"
             done | sort
           } > ../feeds.snapshot.txt
+
+      - name: Inject ImmWrt Backup Tool (ib v1.6-LTS)
+        run: |
+          set -e
+          mkdir -p openwrt/package/base-files/files/usr/bin
+          cat << 'EOF' > openwrt/package/base-files/files/usr/bin/ib
+          #!/bin/sh
+          VERSION="1.6-LTS"; readonly VERSION
+          BACKUP_DIR="/root"; readonly BACKUP_DIR
+          BACKUP="$BACKUP_DIR/immwrt-backup-latest.tar.gz"; readonly BACKUP
+          WORK="/tmp/ib-work"; readonly WORK
+          SAFETY="/tmp/ib-safety"; readonly SAFETY
+
+          REQUIRED_FILES="/etc/config/ddns /etc/config/dhcp /etc/config/firewall /etc/config/luci /etc/config/network /etc/config/passwall /etc/config/passwall_server /etc/config/smartdns /etc/config/system /etc/config/upnpd /etc/crontabs/root"
+          readonly REQUIRED_FILES
+          OPTIONAL_FILES="/etc/config/argon /usr/share/passwall/rules/direct_host /usr/share/passwall/rules/direct_ip /usr/share/passwall/rules/proxy_host /usr/share/passwall/rules/proxy_ip"
+          readonly OPTIONAL_FILES
+
+          fail(){ echo "FAILED: $1"; exit "$2"; }
+          fail_backup(){ rm -f "$BACKUP.tmp"; safe_rm "$WORK"; fail "$1" "$2"; }
+          fail_restore(){ safe_rm "$WORK"; safe_rm "$SAFETY"; fail "$1" "$2"; }
+          safe_rm(){ case "$1" in /tmp/ib-work|/tmp/ib-safety) rm -rf "$1" ;; *) fail "safe_rm aborted" 1 ;; esac; }
+          check_root(){ [ "$(id -u)" = "0" ] || fail "root required" 1; }
+
+          trap_backup() { echo -e "\n[!] Backup interrupted. Cleaning up..."; rm -f "$BACKUP.tmp"; safe_rm "$WORK"; exit 130; }
+          trap_restore() { 
+              echo -e "\n[!] Restore interrupted! Initiating emergency rollback..."
+              if ! restore_safety_back; then
+                  echo "CRITICAL: Emergency rollback failed! Snapshot preserved at $SAFETY"
+              else
+                  safe_rm "$SAFETY"; safe_rm "$WORK"
+              fi
+              exit 130
+          }
+
+          get_target_files(){ 
+              local list=""
+              for f in $REQUIRED_FILES; do 
+                  [ -f "$f" ] || fail "Missing REQUIRED file: $f" 3
+                  list="$list $f"
+              done
+              for f in $OPTIONAL_FILES; do 
+                  if [ -f "$f" ]; then list="$list $f"
+                  else echo "INFO: Optional file missing, skipping: $f" >&2; fi
+              done
+              echo "$list"
+          }
+
+          create_manifest(){ 
+              local target_files="$1"
+              local manifest_file="$2"
+              {
+                  echo "# ImmWrt Backup Manifest"
+                  echo "# Manifest-Version: 1"
+                  echo "# Tool-Version: $VERSION"
+                  echo "# Date: $(date -u +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo unknown)"
+                  echo "# =========================================="
+                  for f in $target_files; do echo "$f"; done
+              } > "$manifest_file"
+          }
+
+          create_checksum(){ 
+              local target_files="$1"
+              local checksum_file="$2"
+              : > "$checksum_file"
+              for f in $target_files; do 
+                  sha256sum "files$f" >> "$checksum_file" || fail_backup "checksum build failed" 4
+              done
+          }
+
+          read_manifest() {
+              awk '
+                  /^[[:space:]]*#/ {next}
+                  NF == 0 {next}
+                  $1 ~ /^\// {print $1}
+              ' manifest.txt > "$WORK/manifest.parsed" || fail_restore "Failed to parse manifest" 5
+              
+              [ -s "$WORK/manifest.parsed" ] || fail_restore "Manifest contains no valid entries" 5
+          }
+
+          verify_manifest(){ 
+              local missing=0
+              while IFS= read -r f; do 
+                  if [ ! -f "files$f" ]; then 
+                      echo "ERROR: Manifest lists $f, but not found in archive."
+                      missing=1
+                  fi
+              done < "$WORK/manifest.parsed"
+              [ "$missing" -eq 1 ] && fail_restore "Archive corrupted or incomplete" 5
+          }
+
+          verify_checksum(){ sha256sum -c checksum.sha256 >/dev/null 2>&1 || fail_restore "checksum mismatch in archive" 5; }
+
+          verify_restored(){ 
+              local err=0
+              local hash_src
+              local hash_dst
+              while IFS= read -r f; do 
+                  if [ ! -f "$f" ]; then 
+                      echo "ERROR: Missing after restore: $f"; err=1; continue
+                  fi
+                  hash_src=$(sha256sum "files$f" | cut -d' ' -f1)
+                  hash_dst=$(sha256sum "$f" | cut -d' ' -f1)
+                  if [ "$hash_src" != "$hash_dst" ]; then 
+                      echo "ERROR: Checksum mismatch on: $f"; err=1
+                  fi
+              done < "$WORK/manifest.parsed"
+              return $err
+          }
+
+          restore_safety(){ 
+              safe_rm "$SAFETY"; mkdir -p "$SAFETY/files" || fail_restore "safety dir create failed" 1
+              : > "$SAFETY/state.txt"
+              while IFS= read -r f; do 
+                  if [ -f "$f" ]; then 
+                      mkdir -p "$(dirname "$SAFETY/files$f")" || fail_restore "dir create failed" 1
+                      cp -p "$f" "$SAFETY/files$f" || fail_restore "safety copy failed" 1
+                      echo "EXIST $f" >> "$SAFETY/state.txt"
+                  elif [ -e "$f" ]; then fail_restore "INVALID STATE: $f is not file" 7
+                  else echo "MISSING $f" >> "$SAFETY/state.txt"; fi
+              done < "$WORK/manifest.parsed"
+          }
+
+          restore_safety_back(){ 
+              local status=0
+              local state
+              local f
+              while IFS=' ' read -r state f; do 
+                  if [ "$state" = "EXIST" ]; then 
+                      cp -p "$SAFETY/files$f" "$f.tmp" && mv "$f.tmp" "$f" || { echo "CRITICAL: Rollback failed for $f"; status=1; }
+                  elif [ "$state" = "MISSING" ]; then rm -f "$f"; fi
+              done < "$SAFETY/state.txt"
+              [ "$status" -eq 1 ] && { echo "CRITICAL: Rollback incomplete."; return 1; }
+              return 0
+          }
+
+          backup(){ 
+              trap trap_backup INT TERM HUP
+              local target_files="$(get_target_files)"
+              
+              safe_rm "$WORK"; rm -f "$BACKUP.tmp"; mkdir -p "$WORK/files" || fail_backup "workspace create failed" 1
+              
+              local count=0
+              for f in $target_files; do 
+                  mkdir -p "$(dirname "$WORK/files$f")" || fail_backup "dir create failed" 1
+                  cp -p "$f" "$WORK/files$f" || fail_backup "copy failed" 1
+                  count=$((count + 1))
+              done
+              echo "Successfully copied $count files."
+              
+              cd "$WORK" || fail_backup "cd failed" 1
+              create_manifest "$target_files" "manifest.txt"
+              create_checksum "$target_files" "checksum.sha256"
+              
+              tar -czf "$BACKUP.tmp" files manifest.txt checksum.sha256 || fail_backup "tar failed" 1
+              tar -tzf "$BACKUP.tmp" >/dev/null || fail_backup "archive verification failed" 4
+              mv "$BACKUP.tmp" "$BACKUP" || fail_backup "replace backup failed" 1
+              safe_rm "$WORK"
+              echo "Backup completed (Total $count files)."
+              trap - INT TERM HUP
+          }
+
+          restore(){ 
+              [ -f "$BACKUP" ] || fail "Backup archive not found at $BACKUP" 5
+              safe_rm "$WORK"; mkdir -p "$WORK" || fail_restore "workspace create failed" 5
+              tar -xzf "$BACKUP" -C "$WORK" || fail_restore "extract failed" 5
+              cd "$WORK" || fail_restore "cd failed" 5
+              
+              [ -f "manifest.txt" ] || fail_restore "manifest missing" 5
+              read_manifest
+              
+              verify_manifest
+              verify_checksum
+              
+              restore_safety
+              trap trap_restore INT TERM HUP
+              
+              local count=0
+              while IFS= read -r f; do 
+                  mkdir -p "$(dirname "$f")" || fail_restore "dir create failed" 6
+                  cp -p "files$f" "$f.tmp" && mv "$f.tmp" "$f" || { 
+                      if ! restore_safety_back; then
+                          echo "CRITICAL: Atomic replace & emergency rollback failed! Snapshot preserved at $SAFETY"
+                          exit 6
+                      else
+                          fail_restore "Atomic replace failed. Rollback successful." 6
+                      fi
+                  }
+                  count=$((count + 1))
+              done < "$WORK/manifest.parsed"
+              
+              echo "Successfully restored $count files."
+              
+              if ! verify_restored; then
+                  if ! restore_safety_back; then
+                      echo "CRITICAL: Verify failed & emergency rollback failed! Snapshot preserved at $SAFETY"
+                      exit 6
+                  else
+                      fail_restore "Verify failed. Rollback successful." 6
+                  fi
+              fi
+              
+              safe_rm "$SAFETY"; safe_rm "$WORK"
+              trap - INT TERM HUP
+              echo
+              echo "Restore completed ($count files)."
+              echo "Please reboot now to apply all restored configuration."
+              exit 0
+          }
+
+          usage() {
+              echo "ImmWrt Backup Tool (ib) v$VERSION"
+              echo "Usage: ib {b|backup | r|restore | v|version}"
+              exit 2
+          }
+
+          case "$1" in 
+              b|backup) check_root; backup ;; 
+              r|restore) check_root; restore ;; 
+              v|version) echo "ImmWrt Backup Tool v$VERSION"; exit 0 ;; 
+              *) usage ;; 
+          esac
+          EOF
+          chmod 755 openwrt/package/base-files/files/usr/bin/ib
           
       - name: Generate Cache Variables
         id: var
@@ -152,7 +377,7 @@ jobs:
           restore-keys: |
             dl-snapshot-
             dl-
-          
+            
       - name: Generate Core Config
         run: |
           cd openwrt
@@ -313,6 +538,10 @@ jobs:
         with:
           tag_name: SNAPSHOT-b${{ github.run_number }}-${{ steps.meta.outputs.date }}
           name: ImmWrt SNAPSHOT Experimental
+          body: |
+            ### 🧪 SNAPSHOT Experimental Build
+            - **原生備份引擎**：注入 `ib v1.6-LTS` 原生備份工具，賦予滾動版本 100% POSIX 相容之原子回滾防護。
+            - **JSON 韌性升級**：增強 `jq` 解析，防止上游不穩定之殘缺選單檔案干擾編譯 Pipeline。
           files: release_assets/*
         env:
           GITHUB_TOKEN: ${{ github.token }}
