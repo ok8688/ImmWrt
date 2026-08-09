@@ -12,8 +12,8 @@ name: Build ImmWrt Master Snapshot
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '26 14 * * 0,2,4,6' # UTC 14:26 = HKT 22:26 (每週日、二、四、六)
+#  schedule:
+#    - cron: '26 14 * * 0,2,4,6' # UTC 14:26 = HKT 22:26 (每週日、二、四、六)
 
 concurrency:
   group: immwrt-build
