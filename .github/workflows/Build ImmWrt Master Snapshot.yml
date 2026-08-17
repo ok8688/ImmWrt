@@ -1438,7 +1438,7 @@ jobs:
           CONFIG_PACKAGE_irqbalance=y
           CONFIG_PACKAGE_kmod-wireguard=y
           CONFIG_PACKAGE_wireguard-tools=y
-          CONFIG_PACKAGE_wg-quick=y
+          CONFIG_PACKAGE_wireguard-tools-wg-quick=y
           CONFIG_PACKAGE_luci-proto-wireguard=y
           CONFIG_PACKAGE_qrencode=y
           CONFIG_PACKAGE_kmod-crypto-kpp=y
@@ -1455,6 +1455,8 @@ jobs:
           CONFIG_PACKAGE_luci-app-fstab=n
           CONFIG_PACKAGE_luci-app-plugins=n
           EOF
+          echo "=== 🔬 WireGuard Package Selection Audit ==="
+          grep -iE "CONFIG_PACKAGE_(kmod-wireguard|wireguard-tools|luci-proto-wireguard|qrencode)" .config || true
           make defconfig && ./scripts/diffconfig.sh > ../logs_diffconfig.txt
           gzip -9f -c .config > ../logs_full.config.gz
           
