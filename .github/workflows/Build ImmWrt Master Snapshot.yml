@@ -6,7 +6,7 @@
 # 終極打磨：
 # 1. 徹底棄用 Shell Wildcard，改用 find -print -quit 提取發行版指紋，免疫未來目錄結構變異。
 # 2. [手術植入] 升級 ib v1.8 原生備份工具，解耦套件強依賴，修復 tar 目錄項誤判。
-# 3. [手術植入] 補齊 WireGuard 核心與 wg-quick，並導入 SDC v1.3 空白容忍抗漂移架構。
+# 3. [手術植入] 補齊 WireGuard 核心、wg-quick 與 qrencode (QR Code 支援)，並導入 SDC v1.3。
 # =====================================================================
 
 name: Build ImmWrt Master Snapshot
@@ -1440,6 +1440,7 @@ jobs:
           CONFIG_PACKAGE_wireguard-tools=y
           CONFIG_PACKAGE_wg-quick=y
           CONFIG_PACKAGE_luci-proto-wireguard=y
+          CONFIG_PACKAGE_qrencode=y
           CONFIG_PACKAGE_kmod-crypto-kpp=y
           CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=y
           CONFIG_PACKAGE_luci-app-ttyd=y
@@ -1582,7 +1583,7 @@ jobs:
             ### 🧪 SNAPSHOT Experimental Build
             - **原生備份引擎**：注入 `ib v1.8` 原生備份工具，加入 Argon `dark.css` 無損保留，賦予滾動版本 100% POSIX 相容之原子回滾防護，並修復 `tar` 目錄項驗證誤判。
             - **JSON 韌性升級**：增強 `jq` 解析，防止上游不穩定之殘缺選單檔案干擾編譯 Pipeline。
-            - **WireGuard 依賴補齊**：明確宣告 WireGuard 核心模組與 `wg-quick` 工具，不再依賴上游隱式行為。
+            - **WireGuard 依賴補齊**：明確宣告 WireGuard 核心模組、`wg-quick` 工具及 `qrencode`，不再依賴上游隱式行為。
             - **SDC v1.3 自癒防護**：升級正則表達式，無縫容忍 upstream 格式漂移，保障編譯可用性。
           files: release_assets/*
         env:
