@@ -1,0 +1,405 @@
+name: 🧪 Test Upstream Golang + sing-box Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-golang-singbox:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      # ================================================================
+      # 1. Checkout
+      # ================================================================
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      # ================================================================
+      # 2. Build Dependencies
+      # ================================================================
+      - name: Install Build Dependencies
+        run: |
+          set -euo pipefail
+
+          sudo apt-get update -qq
+
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            flex \
+            bison \
+            g++ \
+            gawk \
+            gcc-multilib \
+            gettext \
+            git \
+            libncurses5-dev \
+            libssl-dev \
+            rsync \
+            unzip \
+            zlib1g-dev \
+            file \
+            wget \
+            jq \
+            python3-setuptools
+
+      # ================================================================
+      # 3. Clone ImmortalWrt
+      # ================================================================
+      - name: Clone ImmortalWrt Master
+        run: |
+          set -euo pipefail
+
+          echo "▶️ Cloning ImmortalWrt master..."
+
+          git clone \
+            --depth=1 \
+            -b master \
+            https://github.com/immortalwrt/immortalwrt.git \
+            openwrt
+
+          cd openwrt
+
+          echo
+          echo "===== ImmortalWrt Revision ====="
+          git log -1 --oneline
+          git rev-parse HEAD
+
+      # ================================================================
+      # 4. Update Feeds
+      # ================================================================
+      - name: Update Base Feeds
+        run: |
+          set -euo pipefail
+
+          cd openwrt
+
+          echo "▶️ Updating ImmortalWrt feeds..."
+
+          ./scripts/feeds update -a
+
+      # ================================================================
+      # 5. Replace Golang Feed
+      # ================================================================
+      - name: Replace Golang Feed With OpenWrt Upstream
+        run: |
+          set -euo pipefail
+
+          cd openwrt
+
+          echo "💥 Removing ImmortalWrt Golang feed..."
+
+          rm -rf feeds/packages/lang/golang
+
+          echo "🚀 Cloning OpenWrt packages..."
+
+          git clone \
+            --depth=1 \
+            https://github.com/openwrt/packages.git \
+            /tmp/openwrt-packages
+
+          echo "📦 Installing upstream Golang feed..."
+
+          cp -a \
+            /tmp/openwrt-packages/lang/golang \
+            feeds/packages/lang/golang
+
+          echo
+          echo "===== Upstream OpenWrt/packages Revision ====="
+
+          cd /tmp/openwrt-packages
+          git log -1 --oneline
+          git rev-parse HEAD
+
+          cd -
+
+          rm -rf /tmp/openwrt-packages
+
+      # ================================================================
+      # 6. Inspect Golang Version
+      # ================================================================
+      - name: Inspect Golang Feed
+        run: |
+          set -euo pipefail
+
+          cd openwrt
+
+          echo
+          echo "================================================"
+          echo "🔍 Golang Feed"
+          echo "================================================"
+
+          grep -RniE \
+            'GO_DEFAULT_VERSION|GO_VERSION|GO_HOST_VERSION' \
+            feeds/packages/lang/golang/ \
+            2>/dev/null || true
+
+          echo
+          echo "===== Golang Makefile ====="
+
+          sed -n '1,220p' \
+            feeds/packages/lang/golang/golang/Makefile \
+            2>/dev/null || true
+
+      # ================================================================
+      # 7. Install Base Feeds
+      # ================================================================
+      - name: Install Base Feeds
+        run: |
+          set -euo pipefail
+
+          cd openwrt
+
+          echo "▶️ Installing feeds..."
+
+          ./scripts/feeds install -a -f
+
+      # ================================================================
+      # 8. Clone PassWall Packages
+      # ================================================================
+      - name: Clone PassWall Packages
+        run: |
+          set -euo pipefail
+
+          cd openwrt
+
+          echo "▶️ Cloning PassWall packages..."
+
+          git clone \
+            --depth=1 \
+            https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git \
+            package/openwrt-passwall-packages
+
+          echo
+          echo "===== PassWall Packages Revision ====="
+
+          cd package/openwrt-passwall-packages
+
+          git log -1 --oneline
+          git rev-parse HEAD
+
+          cd ../..
+
+      # ================================================================
+      # 9. Clone PassWall
+      # ================================================================
+      - name: Clone PassWall
+        run: |
+          set -euo pipefail
+
+          cd openwrt
+
+          echo "▶️ Cloning PassWall..."
+
+          git clone \
+            --depth=1 \
+            https://github.com/Openwrt-Passwall/openwrt-passwall.git \
+            package/openwrt-passwall
+
+          echo
+          echo "===== PassWall Revision ====="
+
+          cd package/openwrt-passwall
+
+          git log -1 --oneline
+          git rev-parse HEAD
+
+          cd ../..
+
+      # ================================================================
+      # 10. Reinstall Feeds
+      # ================================================================
+      - name: Reinstall All Feeds
+        run: |
+          set -euo pipefail
+
+          cd openwrt
+
+          echo "▶️ Reinstalling all feeds..."
+
+          ./scripts/feeds install -a -f
+
+      # ================================================================
+      # 11. Generate Minimal x86_64 Config
+      # ================================================================
+      - name: Generate Minimal Config
+        run: |
+          set -euo pipefail
+
+          cd openwrt
+
+          cat > .config <<'EOF'
+          CONFIG_TARGET_x86=y
+          CONFIG_TARGET_x86_64=y
+          CONFIG_TARGET_x86_64_DEVICE_generic=y
+
+          CONFIG_PACKAGE_luci-app-passwall=y
+          CONFIG_PACKAGE_sing-box=y
+          CONFIG_PACKAGE_xray-core=y
+          EOF
+
+          echo "▶️ Running make defconfig..."
+
+          make defconfig
+
+          echo
+          echo "===== Selected Packages ====="
+
+          grep -E \
+            '^CONFIG_PACKAGE_(luci-app-passwall|sing-box|xray-core)=' \
+            .config || true
+
+      # ================================================================
+      # 12. Verify Go Host Package Exists
+      # ================================================================
+      - name: Verify Golang Host Package
+        run: |
+          set -euo pipefail
+
+          cd openwrt
+
+          echo "===== Golang Host Package ====="
+
+          make package/golang/host/prepare V=s
+
+      # ================================================================
+      # 13. Download Host Golang
+      # ================================================================
+      - name: Download Host Golang
+        run: |
+          set -euo pipefail
+
+          cd openwrt
+
+          echo "================================================"
+          echo "🔽 Downloading Host Golang"
+          echo "================================================"
+
+          make package/golang/host/download V=s
+
+      # ================================================================
+      # 14. Compile Host Golang
+      # ================================================================
+      - name: Compile Host Golang
+        run: |
+          set -euo pipefail
+
+          cd openwrt
+
+          echo "================================================"
+          echo "🔨 Compiling Host Golang"
+          echo "================================================"
+
+          make package/golang/host/compile \
+            -j"$(nproc)" \
+            V=s
+
+      # ================================================================
+      # 15. Verify Generated Go Toolchain
+      # ================================================================
+      - name: Verify Go Toolchain
+        run: |
+          set -euo pipefail
+
+          cd openwrt
+
+          echo
+          echo "================================================"
+          echo "🔍 Verifying Generated Go Toolchain"
+          echo "================================================"
+
+          find staging_dir -type f -name go 2>/dev/null | head -20 || true
+
+          echo
+          echo "===== Go Binary ====="
+
+          if [ -x staging_dir/host/bin/go ]; then
+            staging_dir/host/bin/go version
+          else
+            echo "❌ staging_dir/host/bin/go not found"
+            exit 1
+          fi
+
+      # ================================================================
+      # 16. Download sing-box
+      # ================================================================
+      - name: Download sing-box
+        run: |
+          set -euo pipefail
+
+          cd openwrt
+
+          echo "================================================"
+          echo "🔽 Downloading sing-box"
+          echo "================================================"
+
+          make package/openwrt-passwall-packages/sing-box/download V=s
+
+      # ================================================================
+      # 17. Prepare sing-box
+      # ================================================================
+      - name: Prepare sing-box
+        run: |
+          set -euo pipefail
+
+          cd openwrt
+
+          echo "================================================"
+          echo "🧩 Preparing sing-box"
+          echo "================================================"
+
+          make package/openwrt-passwall-packages/sing-box/prepare V=s
+
+      # ================================================================
+      # 18. Compile sing-box
+      # ================================================================
+      - name: Compile sing-box
+        run: |
+          set -euo pipefail
+
+          cd openwrt
+
+          echo "================================================"
+          echo "🔥 COMPILING sing-box"
+          echo "================================================"
+
+          make package/openwrt-passwall-packages/sing-box/compile \
+            -j"$(nproc)" \
+            V=s
+
+      # ================================================================
+      # 19. Final Verification
+      # ================================================================
+      - name: Final Verification
+        run: |
+          set -euo pipefail
+
+          cd openwrt
+
+          echo
+          echo "================================================"
+          echo "✅ TEST PASSED"
+          echo "================================================"
+
+          echo
+          echo "===== ImmortalWrt ====="
+          git -C . log -1 --oneline
+
+          echo
+          echo "===== Go ====="
+          staging_dir/host/bin/go version
+
+          echo
+          echo "===== sing-box Build Output ====="
+
+          find bin packages tmp \
+            -type f \
+            \( -name '*sing-box*.ipk' -o -name '*sing-box*.apk' \) \
+            2>/dev/null || true
+
+          echo
+          echo "================================================"
+          echo "🎯 Upstream Golang + sing-box compilation"
+          echo "   COMPLETED SUCCESSFULLY"
+          echo "================================================"
