@@ -8,6 +8,10 @@
 # 2. [手術植入] 升級 ib v1.8 原生備份工具，解耦套件強依賴，修復 tar 目錄項誤判。
 # 3. [手術植入] 補齊 WireGuard 核心、wg-quick 與 qrencode (QR Code 支援)。
 # 4. [SDC v1.4 Final] 優先使用 OpenWrt Native dumpinfo 解析精準取檔，並保留 Legacy pattern 作為防禦性 Fallback。
+# 5. [4G SWAP ARMOR] 完整部署 4G 虛擬記憶體裝甲，徹底免疫大型套件編譯 OOM Kill。
+# 6. [SING-BOX 物理切除] feeds install 後二次通掃物理抹除 sing-box，杜絕自動拉回。
+# 7. [UI 純淨化 + 雙重防線審計] 絕對封殺 luci-app-fstab 與 plugins，但豁免底層 block-mount。
+# 8. [CCACHE 物理隔離] 導入專屬 ccache-snapshot-nosingbox- 快取，徹底阻斷與標準版的快取污染。
 # =====================================================================
 
 name: Build SNAPSHOT-no-singbox
@@ -88,6 +92,14 @@ jobs:
           echo "▶️ [Step] Installing dependencies..."
           sudo apt-get update -qq && sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib gettext git libncurses5-dev libssl-dev rsync unzip zlib1g-dev file wget jq golang-go python3-setuptools ccache
           
+          echo "▶️ [Step] Deploying 4G Swap Armor (Deterministic)..."
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 4G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+
           echo "=== 🧬 ABI Fingerprint ===" > toolchain.info
           echo "Date: $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> toolchain.info
           echo "GCC: $(gcc --version | head -n1)" >> toolchain.info
@@ -116,6 +128,15 @@ jobs:
           echo "▶️ [Step] Installing feeds..."
           retry bash -c 'set -o pipefail; timeout 35m ./scripts/feeds install -a -f'
           
+          echo "🚀 [Step] 終極二次掃蕩：全面物理抹除 sing-box 與不必要的 UI 套件，徹底切斷自動拉回..."
+          rm -rf package/openwrt-passwall-packages/sing-box \
+                 package/feeds/*/sing-box \
+                 package/feeds/*/luci-app-fstab \
+                 package/feeds/*/luci-app-plugins \
+                 feeds/packages/net/sing-box \
+                 feeds/luci/applications/luci-app-fstab \
+                 feeds/luci/applications/luci-app-plugins
+
           # =====================================================
           # 🔒 Stable Drift Control v1.4 (Native Build System)
           # =====================================================
@@ -830,7 +851,7 @@ jobs:
                           rm -f "$tmp"
 
                           if ! cp -p "$SAFETY/files$f" "$tmp" ||
-                               ! mv -f "$tmp" "$f"; then
+                             ! mv -f "$tmp" "$f"; then
 
                               printf \
           "CRITICAL: Rollback failed for %s\n" \
@@ -1206,7 +1227,7 @@ jobs:
                   rm -f "$tmp"
 
                   if ! cp -p "files$f" "$tmp" ||
-                       ! mv -f "$tmp" "$f"; then
+                     ! mv -f "$tmp" "$f"; then
 
                       rm -f "$tmp"
 
@@ -1448,7 +1469,7 @@ jobs:
         id: var
         run: |
           echo "dl_key=dl-snapshot-${{ hashFiles('feeds.snapshot.txt') }}-$(sha256sum toolchain.info | cut -d' ' -f1)" >> $GITHUB_OUTPUT
-          echo "ccache_key=ccache-snapshot-${{ hashFiles('feeds.snapshot.txt') }}-$(sha256sum toolchain.info | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "ccache_key=ccache-snapshot-nosingbox-${{ hashFiles('feeds.snapshot.txt') }}-$(sha256sum toolchain.info | cut -d' ' -f1)" >> $GITHUB_OUTPUT
 
       - name: Restore DL Cache
         uses: actions/cache/restore@v4
@@ -1467,7 +1488,7 @@ jobs:
           key: ${{ steps.var.outputs.ccache_key }}
           # 🛡️ 嚴格邊界：隔離不同世界線的編譯緩存，不允許泛用 fallback 造成跨版本污染
           restore-keys: |
-            ccache-snapshot-
+            ccache-snapshot-nosingbox-
             
       - name: Generate Core Config
         run: |
@@ -1484,8 +1505,7 @@ jobs:
           CONFIG_PACKAGE_luci-app-passwall=y
           CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y
           CONFIG_PACKAGE_xray-core=y
-          CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox=n
-          CONFIG_PACKAGE_sing-box=n
+          # CONFIG_PACKAGE_sing-box is not set
           CONFIG_PACKAGE_geoview=y
           CONFIG_PACKAGE_ca-bundle=y
           CONFIG_PACKAGE_ca-certificates=y
@@ -1525,26 +1545,20 @@ jobs:
           CONFIG_PACKAGE_luci-app-fstab=n
           CONFIG_PACKAGE_luci-app-plugins=n
           EOF
+          
+          echo "=== 🔒 Forbidden Package Defconfig Audit ==="
+          # 🚀 block-mount 已豁免，保證 x86 架構正常編譯掛載功能
+          for p in sing-box luci-app-fstab luci-app-plugins; do
+            if grep -Eq "^CONFIG_PACKAGE_${p}=[ym]" .config; then
+              echo "❌ FORBIDDEN PACKAGE ENABLED IN CONFIG: $p"
+              exit 1
+            fi
+          done
+          echo "✅ Defconfig forbidden package audit passed"
+          
           echo "=== 🔬 WireGuard Package Selection Audit ==="
           grep -iE "CONFIG_PACKAGE_(kmod-wireguard|wireguard-tools|luci-proto-wireguard|qrencode)" .config || true
-          make defconfig
-
-          # =====================================================
-          # 🔒 Sing-box Surgical Exclusion Guard
-          # =====================================================
-          if grep -q '^CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox=y$' .config; then
-            echo "❌ FATAL: PassWall re-enabled Sing-box"
-            exit 1
-          fi
-
-          if grep -q '^CONFIG_PACKAGE_sing-box=y$' .config; then
-            echo "❌ FATAL: sing-box was re-enabled by dependency resolution"
-            exit 1
-          fi
-
-          echo "✅ Sing-box excluded from final build configuration"
-
-          ./scripts/diffconfig.sh > ../logs_diffconfig.txt
+          make defconfig && ./scripts/diffconfig.sh > ../logs_diffconfig.txt
           gzip -9f -c .config > ../logs_full.config.gz
           
       - name: Build Firmware
@@ -1562,13 +1576,13 @@ jobs:
           
           export CC="ccache gcc" CXX="ccache g++"
           
-          # 📟 駕駛艙儀表板複合監控指標
+          # 📟 駕駛艙儀表板複合監控指標 (加入 || true 防止中斷)
           ( while true; do 
               LOAD=$(uptime | awk -F'load average:' '{print $2}' | xargs)
               MEM=$(free -m | awk '/Mem:/ {printf "%d/%dMB | %.0f%%", $3, $2, ($3/$2)*100}')
               DISK=$(df -h . | awk 'NR==2 {print $5}')
               echo "[MONITOR]  $LOAD | $MEM | DISK: $DISK"
-              sleep 120
+              sleep 120 || true
             done ) &
           trap 'kill $! 2>/dev/null' EXIT
           
@@ -1624,6 +1638,16 @@ jobs:
           
           find openwrt/bin/targets/x86/64 -name "*.manifest" -exec sh -c 'echo "=== $(basename "$1") ==="; cat "$1"; echo' _ {} \; > release_assets/installed-packages.txt
           [ -s release_assets/installed-packages.txt ] || rm -f release_assets/installed-packages.txt
+          
+          echo "=== 🔒 Final Manifest Package Audit ==="
+          # 🚀 block-mount 豁免放行
+          for p in sing-box luci-app-fstab luci-app-plugins; do
+            if grep -Eq "^${p} " release_assets/installed-packages.txt; then
+              echo "❌ FORBIDDEN PACKAGE FOUND IN FINAL MANIFEST: $p"
+              exit 1
+            fi
+          done
+          echo "✅ Final manifest package audit passed"
           
           find openwrt/bin/packages -name "*.apk" | sort > release_assets/apk-list.txt
           [ -s release_assets/apk-list.txt ] || rm -f release_assets/apk-list.txt
