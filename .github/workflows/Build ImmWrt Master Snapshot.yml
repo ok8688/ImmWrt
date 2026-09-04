@@ -10,7 +10,7 @@
 # 4. [SDC v1.4 Final] 優先使用 OpenWrt Native dumpinfo 解析精準取檔，並保留 Legacy pattern 作為防禦性 Fallback。
 # =====================================================================
 
-name: Build ImmortalWrt-Master-Snapshot-精修版
+name: Build ImmWrt Master Snapshot
 
 on:
   workflow_dispatch:
