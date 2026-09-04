@@ -10,7 +10,7 @@
 # 4. [SDC v1.4 Final] 優先使用 OpenWrt Native dumpinfo 解析精準取檔，並保留 Legacy pattern 作為防禦性 Fallback。
 # =====================================================================
 
-name: Build ImmWrt Master Snapshot
+name: Build ImmortalWrt-Master-Snapshot-精修版
 
 on:
   workflow_dispatch:
@@ -110,8 +110,8 @@ jobs:
           
           echo "▶️ [Step] Cloning Passwall ecosystem..."
           rm -rf feeds/luci/applications/luci-app-passwall feeds/packages/net/xray-core feeds/packages/net/sing-box
-          retry git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/openwrt-passwall-packages
-          retry git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/openwrt-passwall
+          retry bash -c 'timeout 20m git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/openwrt-passwall-packages'
+          retry bash -c 'timeout 20m git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/openwrt-passwall'
           
           echo "▶️ [Step] Installing feeds..."
           retry bash -c 'set -o pipefail; timeout 35m ./scripts/feeds install -a -f'
@@ -1448,8 +1448,8 @@ jobs:
       - name: Generate Cache Variables
         id: var
         run: |
-          echo "dl_key=dl-snapshot-${{ hashFiles('feeds.snapshot.txt') }}-$(sha256sum toolchain.info | cut -d' ' -f1)" >> $GITHUB_OUTPUT
-          echo "ccache_key=ccache-snapshot-${{ hashFiles('feeds.snapshot.txt') }}-$(sha256sum toolchain.info | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          echo "dl_key=dl-snapshot-${{ hashFiles('feeds.snapshot.txt') }}" >> $GITHUB_OUTPUT
+          echo "ccache_key=ccache-snapshot-${{ hashFiles('feeds.snapshot.txt') }}" >> $GITHUB_OUTPUT
 
       - name: Restore DL Cache
         uses: actions/cache/restore@v4
@@ -1472,6 +1472,7 @@ jobs:
             
       - name: Generate Core Config
         run: |
+          set -euo pipefail
           cd openwrt
           cat << 'EOF' > .config
           CONFIG_TARGET_x86=y
