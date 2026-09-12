@@ -1621,6 +1621,7 @@ jobs:
             echo "# CONFIG_PACKAGE_block-mount is not set"
             echo "# CONFIG_PACKAGE_luci-app-fstab is not set"
             echo "# CONFIG_PACKAGE_luci-app-plugins is not set"
+            echo "CONFIG_DEVEL=y"
             echo "CONFIG_CCACHE=y"
           } > .config
           
