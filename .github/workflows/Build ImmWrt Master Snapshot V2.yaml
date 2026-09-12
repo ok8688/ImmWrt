@@ -15,7 +15,7 @@
 # 9. [Snapshot Native Track] 雙核心滿血火力全開：完整編譯並保留 Xray-core 與 Sing-box 核心，驗證上游最新分流元件穩定性。
 # 10. [CCACHE 加速] 完全交予 OpenWrt 底層接管，搭配 ccache -z 歸零觀測與並行 Retry 機制。
 # 11. [Node 24 Ready & Platform Longevity] 執行環境遷移至 ubuntu-24.04，採用 Node 24 相容的 Actions 版本，並透過 FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 預先指定 Actions runtime 使用 Node 24，降低後續 Actions 遷移風險。
-# 12. [Failure Archaeology] 獨立實作 if: always() 的考古現場日誌上傳（actions/upload-artifact@v6），確保編譯成功 or 失敗皆可提取完整現場。
+# 12. [Failure Archaeology] 獨立實作 if: always() 的考古現場日誌上傳（actions/upload-artifact@v6），包含隱藏配置與 SDC 備份現場，確保編譯成功 or 失敗皆可提取完整現場。
 # 13. [Release Asset Self-Verification Closure] 在 release_assets 目錄內執行二次本地 sha256sum 閉環校驗，確保發布資產百分之百零瑕疵。
 # =====================================================================
 
@@ -24,7 +24,7 @@ name: Build ImmWrt Master Snapshot V2
 on:
   workflow_dispatch:
 #  schedule:
-#    - cron: '26 14 * * 0,2,4,6'
+#    - cron: '26 14 * * 0,2,4,6' # UTC 14:26 = HKT 22:26 (每週日、二、四、六)
 
 concurrency:
   group: immwrt-build
@@ -290,6 +290,7 @@ jobs:
             openwrt/dl
           key: ${{ steps.var.outputs.dl_key }}
           restore-keys: |
+            dl-snapshot-${{ hashFiles('feeds.snapshot.txt') }}-
             dl-snapshot-
             
       - name: Restore Cache (ccache)
@@ -330,148 +331,6 @@ jobs:
           fi
 
           echo "✅ Rust host build patch applied: download-ci-llvm=false"
-          # =====================================================
-
-          # =====================================================
-          # 🔒 Stable Drift Control v2.0 (Strict Exact-One & Resilient Rollback)
-          # =====================================================
-          sync_hash() {
-            local name="$1"
-            local makefile="$2"
-            
-            if [ ! -f "$makefile" ]; then
-              echo "❌ FATAL: $name: Makefile missing at $makefile"
-              return 1
-            fi
-            
-            local pkg_dir="$(dirname "$makefile")"
-            echo "🔒 [SDC v2.0] Native source resolution: $name"
-            
-            cp -a "$makefile" "${makefile}.sdc-backup" || {
-              echo "❌ FATAL: Failed to create Makefile backup for $name"
-              return 1
-            }
-            
-            restore_original_makefile() {
-              echo "⚠️ $name: Restoring original Makefile state"
-              if cp -a "${makefile}.sdc-backup" "$makefile"; then
-                rm -f "${makefile}.sdc-backup"
-                echo "✅ $name: Original Makefile restored successfully"
-                return 0
-              else
-                echo "❌ CRITICAL: Failed to restore original Makefile for $name" >&2
-                echo "❌ CRITICAL: Preserving backup: ${makefile}.sdc-backup" >&2
-                return 1
-              fi
-            }
-            
-            if grep -Eq '^[[:space:]]*PKG_HASH[[:space:]]*(:=|\?=|=)' "$makefile"; then
-              sed -i -E 's/^[[:space:]]*PKG_HASH[[:space:]]*(:=|\?=|=).*/PKG_HASH:=skip/' "$makefile"
-            else
-              printf '\nPKG_HASH:=skip\n' >> "$makefile"
-            fi
-
-            if grep -Eq '^[[:space:]]*PKG_MIRROR_HASH[[:space:]]*(:=|\?=|=)' "$makefile"; then
-              sed -i -E 's/^[[:space:]]*PKG_MIRROR_HASH[[:space:]]*(:=|\?=|=).*/PKG_MIRROR_HASH:=skip/' "$makefile"
-            fi
-            
-            # Strict Exact-One Source resolution
-            local source_lines=""
-            local openwrt_root="$PWD"
-            
-            source_lines="$(
-              cd "$pkg_dir" &&
-              make -s -f Makefile \
-                TOPDIR="$openwrt_root" \
-                DUMP=1 \
-                dumpinfo 2>/dev/null \
-                | sed -n 's/^Source: //p' \
-                | sed 's/\r$//' \
-                | sed 's/^[[:space:]]*//' \
-                | sed 's/[[:space:]]*$//'
-            )" || true
-            
-            local source_count
-            source_count="$(printf '%s\n' "$source_lines" | sed '/^$/d' | wc -l)"
-            if [ "$source_count" -ne 1 ]; then
-              echo "❌ FATAL: dumpinfo must resolve exactly one Source for $name, got $source_count"
-              if ! restore_original_makefile; then exit 1; fi
-              return 1
-            fi
-            
-            local pkg_source="$source_lines"
-            pkg_source="$(basename -- "$pkg_source")"
-            echo "🧹 [SDC v2.0] Purging stale dl cache for exact source: $pkg_source"
-            rm -f "dl/$pkg_source"
-            
-            local DOWNLOAD_OK=0
-            if make "${pkg_dir}/download" V=s >"/tmp/sdc-${name}-download.log" 2>&1; then
-              DOWNLOAD_OK=1
-              echo "✅ $name: download stage completed"
-            else
-              echo "❌ FATAL: download stage failed for $name"
-              tail -n 80 "/tmp/sdc-${name}-download.log" || true
-              if ! restore_original_makefile; then exit 1; fi
-              return 1
-            fi
-            
-            local FILE=""
-            if [ "$DOWNLOAD_OK" -eq 1 ] && [ -f "dl/$pkg_source" ]; then
-              FILE="dl/$pkg_source"
-            else
-              echo "❌ FATAL: Exact artifact dl/$pkg_source missing after successful download."
-              if ! restore_original_makefile; then exit 1; fi
-              return 1
-            fi
-            
-            local NEW_HASH=""
-            NEW_HASH="$(sha256sum "$FILE" | awk '{print $1}')" || true
-            if [ -n "$NEW_HASH" ]; then
-              if ! cp -a "${makefile}.sdc-backup" "$makefile"; then
-                echo "❌ FATAL: Failed to restore backup for hash insertion in $name"
-                echo "❌ CRITICAL: Preserving backup: ${makefile}.sdc-backup and halting execution." >&2
-                return 1
-              fi
-              
-              if grep -Eq '^[[:space:]]*PKG_HASH[[:space:]]*(:=|\?=|=)' "$makefile"; then
-                sed -i -E "s/^[[:space:]]*PKG_HASH[[:space:]]*(:=|\?=|=).*/PKG_HASH:=$NEW_HASH/" "$makefile"
-              else
-                printf '\nPKG_HASH:=%s\n' "$NEW_HASH" >> "$makefile"
-              fi
-              sed -i -E '/^[[:space:]]*PKG_MIRROR_HASH/d' "$makefile"
-              
-              local HASH_LINES
-              HASH_LINES="$(grep -Ec '^[[:space:]]*PKG_HASH[[:space:]]*(:=|\?=|=)' "$makefile")"
-              if [ "$HASH_LINES" -ne 1 ]; then
-                 echo "❌ FATAL: Expected exactly one PKG_HASH assignment, got $HASH_LINES"
-                 if ! restore_original_makefile; then exit 1; fi
-                 return 1
-              fi
-              
-              if grep -q "PKG_HASH:=$NEW_HASH" "$makefile"; then
-                echo "✅ $name: Upstream aligned & Verified"
-                echo "   Source : $FILE"
-                echo "   SHA256 : $NEW_HASH"
-                rm -f "${makefile}.sdc-backup"
-                return 0
-              else
-                echo "❌ FATAL: SHA256 write verification failed for $name"
-                if ! restore_original_makefile; then
-                  echo "❌ CRITICAL: Backup preserved due to failed secondary rollback." >&2
-                fi
-                return 1
-              fi
-            else
-              echo "❌ FATAL: SHA256 calculation failed for $name"
-              if ! restore_original_makefile; then exit 1; fi
-              return 1
-            fi
-          }
-
-          if ! sync_hash "sing-box" "package/openwrt-passwall-packages/sing-box/Makefile"; then exit 1; fi
-          if ! sync_hash "xray-core" "package/openwrt-passwall-packages/xray-core/Makefile"; then exit 1; fi
-          
-          echo "🔒 [SDC v2.0] Adaptive mode completed"
           # =====================================================
 
           # 全域精準破壞前端選單殘留節點 
@@ -1652,7 +1511,7 @@ jobs:
           # CLI Dispatcher
           # ============================================================
 
-          case "$1" in
+          case "${1:-}" in
 
               b|backup)
 
@@ -1760,6 +1619,166 @@ jobs:
           grep -iE "CONFIG_PACKAGE_(kmod-wireguard|wireguard-tools|luci-proto-wireguard|qrencode)" .config || true
           
           make defconfig && ./scripts/diffconfig.sh > ../logs_diffconfig.txt
+
+          # =====================================================
+          # 🔒 Stable Drift Control v2.0 (Strict Exact-One & Resilient Rollback)
+          # =====================================================
+          sync_hash() {
+            local name="$1"
+            local makefile="$2"
+            
+            if [ ! -f "$makefile" ]; then
+              echo "❌ FATAL: $name: Makefile missing at $makefile"
+              return 1
+            fi
+            
+            local pkg_dir="$(dirname "$makefile")"
+            echo "🔒 [SDC v2.0] Native source resolution: $name"
+            
+            cp -a "$makefile" "${makefile}.sdc-backup" || {
+              echo "❌ FATAL: Failed to create Makefile backup for $name"
+              return 1
+            }
+            
+            restore_original_makefile() {
+              echo "⚠️ $name: Restoring original Makefile state"
+              if cp -a "${makefile}.sdc-backup" "$makefile"; then
+                rm -f "${makefile}.sdc-backup"
+                echo "✅ $name: Original Makefile restored successfully"
+                return 0
+              else
+                echo "❌ CRITICAL: Failed to restore original Makefile for $name" >&2
+                echo "❌ CRITICAL: Preserving backup: ${makefile}.sdc-backup" >&2
+                return 1
+              fi
+            }
+            
+            if grep -Eq '^[[:space:]]*PKG_HASH[[:space:]]*(:=|\?=|=)' "$makefile"; then
+              if ! sed -i -E 's/^[[:space:]]*PKG_HASH[[:space:]]*(:=|\?=|=).*/PKG_HASH:=skip/' "$makefile"; then
+                echo "❌ FATAL: Failed to neutralize PKG_HASH for $name"
+                if ! restore_original_makefile; then exit 1; fi
+                return 1
+              fi
+            else
+              if ! printf '\nPKG_HASH:=skip\n' >> "$makefile"; then
+                echo "❌ FATAL: Failed to append PKG_HASH neutralizer for $name"
+                if ! restore_original_makefile; then exit 1; fi
+                return 1
+              fi
+            fi
+
+            if grep -Eq '^[[:space:]]*PKG_MIRROR_HASH[[:space:]]*(:=|\?=|=)' "$makefile"; then
+              if ! sed -i -E 's/^[[:space:]]*PKG_MIRROR_HASH[[:space:]]*(:=|\?=|=).*/PKG_MIRROR_HASH:=skip/' "$makefile"; then
+                echo "❌ FATAL: Failed to neutralize PKG_MIRROR_HASH for $name"
+                if ! restore_original_makefile; then exit 1; fi
+                return 1
+              fi
+            fi
+            
+            # Strict Exact-One Source resolution
+            local source_lines=""
+
+            source_lines="$(make -s DUMP=1 "${pkg_dir}/dumpinfo" 2>/dev/null \
+              | sed -n 's/^Source: //p' \
+              | sed 's/\r$//' \
+              | sed 's/^[[:space:]]*//' \
+              | sed 's/[[:space:]]*$//')" || true
+            
+            local source_count
+            source_count="$(printf '%s\n' "$source_lines" | sed '/^$/d' | wc -l)"
+            if [ "$source_count" -ne 1 ]; then
+              echo "❌ FATAL: dumpinfo must resolve exactly one Source for $name, got $source_count"
+              if ! restore_original_makefile; then exit 1; fi
+              return 1
+            fi
+            
+            local pkg_source="$source_lines"
+            pkg_source="$(basename -- "$pkg_source")"
+            echo "🧹 [SDC v2.0] Purging stale dl cache for exact source: $pkg_source"
+            rm -f "dl/$pkg_source"
+            
+            local DOWNLOAD_OK=0
+            if make "${pkg_dir}/download" V=s >"/tmp/sdc-${name}-download.log" 2>&1; then
+              DOWNLOAD_OK=1
+              echo "✅ $name: download stage completed"
+            else
+              echo "❌ FATAL: download stage failed for $name"
+              tail -n 80 "/tmp/sdc-${name}-download.log" || true
+              if ! restore_original_makefile; then exit 1; fi
+              return 1
+            fi
+            
+            local FILE=""
+            if [ "$DOWNLOAD_OK" -eq 1 ] && [ -f "dl/$pkg_source" ]; then
+              FILE="dl/$pkg_source"
+            else
+              echo "❌ FATAL: Exact artifact dl/$pkg_source missing after successful download."
+              if ! restore_original_makefile; then exit 1; fi
+              return 1
+            fi
+            
+            local NEW_HASH=""
+            NEW_HASH="$(sha256sum "$FILE" | awk '{print $1}')" || true
+            if [ -n "$NEW_HASH" ]; then
+              if ! cp -a "${makefile}.sdc-backup" "$makefile"; then
+                echo "❌ FATAL: Failed to restore backup for hash insertion in $name"
+                echo "❌ CRITICAL: Preserving backup: ${makefile}.sdc-backup and halting execution." >&2
+                return 1
+              fi
+              
+              if grep -Eq '^[[:space:]]*PKG_HASH[[:space:]]*(:=|\?=|=)' "$makefile"; then
+                if ! sed -i -E "s/^[[:space:]]*PKG_HASH[[:space:]]*(:=|\?=|=).*/PKG_HASH:=$NEW_HASH/" "$makefile"; then
+                  echo "❌ FATAL: Failed to write new PKG_HASH for $name"
+                  if ! restore_original_makefile; then exit 1; fi
+                  return 1
+                fi
+              else
+                if ! printf '\nPKG_HASH:=%s\n' "$NEW_HASH" >> "$makefile"; then
+                  echo "❌ FATAL: Failed to append new PKG_HASH for $name"
+                  if ! restore_original_makefile; then exit 1; fi
+                  return 1
+                fi
+              fi
+
+              if ! sed -i -E '/^[[:space:]]*PKG_MIRROR_HASH/d' "$makefile"; then
+                echo "❌ FATAL: Failed to purge PKG_MIRROR_HASH for $name"
+                if ! restore_original_makefile; then exit 1; fi
+                return 1
+              fi
+              
+              local HASH_LINES
+              HASH_LINES="$(grep -Ec '^[[:space:]]*PKG_HASH[[:space:]]*(:=|\?=|=)' "$makefile")"
+              if [ "$HASH_LINES" -ne 1 ]; then
+                 echo "❌ FATAL: Expected exactly one PKG_HASH assignment, got $HASH_LINES"
+                 if ! restore_original_makefile; then exit 1; fi
+                 return 1
+              fi
+              
+              if grep -Fxq "PKG_HASH:=$NEW_HASH" "$makefile"; then
+                echo "✅ $name: Upstream aligned & Verified"
+                echo "   Source : $FILE"
+                echo "   SHA256 : $NEW_HASH"
+                rm -f "${makefile}.sdc-backup"
+                return 0
+              else
+                echo "❌ FATAL: SHA256 write verification failed for $name"
+                if ! restore_original_makefile; then
+                  echo "❌ CRITICAL: Backup preserved due to failed secondary rollback." >&2
+                fi
+                return 1
+              fi
+            else
+              echo "❌ FATAL: SHA256 calculation failed for $name"
+              if ! restore_original_makefile; then exit 1; fi
+              return 1
+            fi
+          }
+
+          if ! sync_hash "sing-box" "package/openwrt-passwall-packages/sing-box/Makefile"; then exit 1; fi
+          if ! sync_hash "xray-core" "package/openwrt-passwall-packages/xray-core/Makefile"; then exit 1; fi
+          
+          echo "🔒 [SDC v2.0] Adaptive mode completed"
+          # =====================================================
           
           echo "=== 🔐 Required Core Configuration Audit ==="
           for cfg in \
@@ -1879,6 +1898,14 @@ jobs:
       - name: Validate & Final Packaging
         run: |
           set -euo pipefail
+          
+          # 🔒 Mandatory Build Gate Enforcement
+          if ! grep -Fxq 'BUILD_RESULT=SUCCESS' build-status.txt 2>/dev/null; then
+            echo "❌ FATAL: BUILD_RESULT is not SUCCESS or build-status.txt is missing"
+            cat build-status.txt 2>/dev/null || true
+            exit 1
+          fi
+
           ROOT="$(pwd)"
           TARGET_DIR="openwrt/bin/targets/x86/64"
           mkdir -p release_assets
@@ -1980,6 +2007,7 @@ jobs:
         with:
           name: ImmWrt-Snapshot-Archaeology-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: warn
+          include-hidden-files: true
           retention-days: 14
           path: |
             toolchain.info
@@ -1994,6 +2022,7 @@ jobs:
             /tmp/retry_debug.log
             openwrt/.config
             openwrt/package/openwrt-passwall*/**/Makefile
+            openwrt/package/openwrt-passwall*/**/*.sdc-backup
 
       - name: Publish Release
         uses: softprops/action-gh-release@v3
@@ -2011,8 +2040,8 @@ jobs:
             - **網路核心擴展**：完整嵌入 `WireGuard` 核心套件、密碼學底層模組、`wg-quick` 工具鏈及 `qrencode` (QR Code 支援)。
             - **自癒架構 (SDC v2.0 Strict)**：導入整份 Makefile 無損快照；任何可恢復異常皆觸發原始狀態回滾，遭拒時強制保留備份現場並中止 CI。寫入後強制校驗 Exact-One 配置，確保依賴樹語意完整。
             - **嚴格退回機制 (Strict No-Guess Resolution)**：SDC 僅接受 dumpinfo 解析出的「剛好一個」Exact Source；下載、驗證、寫入任一階段失敗即完整回滾並中止 CI，不使用萬用字元猜測 fallback。
-            - **極致溯源與建置時間正規化**：將 `openwrt_release` 的提取範圍絕對限縮至 `target-x86_64_musl*` 杜絕多目標殘留干擾；以 ImmortalWrt、PassWall、PassWall Packages 三方最新 commit timestamp 正規化 `SOURCE_DATE_EPOCH`；Swap 防漂移：無 Swap 時建立 4GB 裝甲，已有則保留。
-            - **快取綱要嚴格隔離**：快取採 Immutable Cumulative Generation：每次 Run 使用唯一 generation key，並透過 restore-prefix 繼承上一代可用快取，形成跨 Run 的累積式增量編譯鏈。
+            - **可復現性時間基準 Epoch**：以 ImmortalWrt、PassWall、PassWall Packages 三方倉庫中最新 Commit Timestamp 作為 `SOURCE_DATE_EPOCH` 基準；Swap 防漂移：無 Swap 時建立 4GB 裝甲，已有則保留。
+            - **快取綱要嚴格隔離**：快取採 Immutable Cumulative Generation：每次 Run 使用唯一 generation key，並透過 feeds snapshot 二級梯隊與 restore-prefix 繼承可用快取，形成跨 Run 的累積式增量編譯鏈。
             - **Node 24 Ready**：執行環境為 ubuntu-24.04，採用 Node 24 相容的 Actions 版本，並透過 `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` 預先指定 Actions runtime 使用 Node 24，降低後續 Actions 遷移風險。
             - **Snapshot Native Track**：雙核心滿血火力全開：完整編譯並保留 Xray-core 與 Sing-box 核心，驗證上游最新分流元件穩定性。
           files: release_assets/*
