@@ -24,7 +24,7 @@ name: Build ImmWrt Master Snapshot V2
 on:
   workflow_dispatch:
 #  schedule:
-#    - cron: '26 14 * * 0,2,4,6' # UTC 14:26 = HKT 22:26 (每週日、二、四、六)
+#    - cron: '26 14 * * 0,2,4,6'
 
 concurrency:
   group: immwrt-build
@@ -333,9 +333,18 @@ jobs:
           echo "✅ Rust host build patch applied: download-ci-llvm=false"
           # =====================================================
 
-          # 全域精準破壞前端選單殘留節點 
+          # 全域精準破壞前端選單殘留節點（以特徵篩選，避免無關套件的上游語法缺陷導致解析中斷）
           find feeds package -path "*/usr/share/luci/menu.d/*.json" -type f | while read -r f; do
-            jq 'del(."admin/system/mounts", ."admin/services/mounts", ."admin/services/plugins")' "$f" > "$f.tmp" && mv "$f.tmp" "$f" || { echo "❌ FATAL: Invalid JSON in $f"; exit 1; }
+            if grep -Eq '"admin/(system/mounts|services/mounts|services/plugins)"' "$f"; then
+              echo "🔧 Sanitizing leftover menu nodes in: $f"
+              if jq 'del(."admin/system/mounts", ."admin/services/mounts", ."admin/services/plugins")' "$f" > "$f.tmp"; then
+                mv "$f.tmp" "$f"
+              else
+                echo "❌ FATAL: Failed to parse or sanitize valid target JSON in $f"
+                rm -f "$f.tmp"
+                exit 1
+              fi
+            fi
           done
 
       - name: Inject ImmWrt Backup Tool (ib v1.8)
@@ -1393,7 +1402,7 @@ jobs:
                       5
 
               verify_archive_members "$BACKUP" || \
-                  fail \
+                  fail_restore_preflight \
           "Archive member security verification failed" \
                       5
 
@@ -1474,7 +1483,7 @@ jobs:
                       5
 
               verify_archive_members "$BACKUP" || \
-                  fail \
+                  fail_restore_preflight \
           "Archive member security verification failed" \
                       5
 
