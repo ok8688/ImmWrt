@@ -24,7 +24,7 @@ name: Build ImmWrt Master Snapshot V2
 on:
   workflow_dispatch:
 #  schedule:
-#    - cron: '26 14 * * 0,2,4,6'
+#    - cron: '26 14 * * 0,2,4,6' # UTC 14:26 = HKT 22:26 (每週日、二、四、六)
 
 concurrency:
   group: immwrt-build
@@ -1402,7 +1402,7 @@ jobs:
                       5
 
               verify_archive_members "$BACKUP" || \
-                  fail_restore_preflight \
+                  fail \
           "Archive member security verification failed" \
                       5
 
@@ -1483,7 +1483,7 @@ jobs:
                       5
 
               verify_archive_members "$BACKUP" || \
-                  fail_restore_preflight \
+                  fail \
           "Archive member security verification failed" \
                       5
 
@@ -1687,7 +1687,7 @@ jobs:
             # Strict Exact-One Source resolution
             local source_lines=""
 
-            source_lines="$(make -s DUMP=1 "${pkg_dir}/dumpinfo" 2>/dev/null \
+            source_lines="$(make --no-print-directory -s -f "$makefile" TOPDIR="$PWD" DUMP=1 dumpinfo 2>"/tmp/sdc-${name}-dumpinfo.log" \
               | sed -n 's/^Source: //p' \
               | sed 's/\r$//' \
               | sed 's/^[[:space:]]*//' \
@@ -1697,6 +1697,7 @@ jobs:
             source_count="$(printf '%s\n' "$source_lines" | sed '/^$/d' | wc -l)"
             if [ "$source_count" -ne 1 ]; then
               echo "❌ FATAL: dumpinfo must resolve exactly one Source for $name, got $source_count"
+              cat "/tmp/sdc-${name}-dumpinfo.log" 2>/dev/null || true
               if ! restore_original_makefile; then exit 1; fi
               return 1
             fi
