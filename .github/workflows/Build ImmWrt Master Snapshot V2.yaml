@@ -377,6 +377,10 @@ jobs:
             
             # Strict Exact-One Source resolution
             local source_lines=""
+            echo "🔎 [SDC DEBUG] Testing dumpinfo target: ${pkg_dir}/dumpinfo"
+            echo "🔎 [SDC DEBUG] Makefile: ${makefile}"
+            make -s DUMP=1 "${pkg_dir}/dumpinfo" 2>&1 | grep -E '^(Package:|Version:|Source:|Makefile:|make(\[[0-9]+\])?:|Makefile[.:])' || true
+            
             source_lines="$(make -s DUMP=1 "${pkg_dir}/dumpinfo" 2>/dev/null \
               | sed -n 's/^Source: //p' \
               | sed 's/\r$//' \
