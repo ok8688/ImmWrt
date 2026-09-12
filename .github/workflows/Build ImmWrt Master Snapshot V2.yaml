@@ -377,15 +377,19 @@ jobs:
             
             # Strict Exact-One Source resolution
             local source_lines=""
-            echo "🔎 [SDC DEBUG] Testing dumpinfo target: ${pkg_dir}/dumpinfo"
-            echo "🔎 [SDC DEBUG] Makefile: ${makefile}"
-            make -s DUMP=1 "${pkg_dir}/dumpinfo" 2>&1 | grep -E '^(Package:|Version:|Source:|Makefile:|make(\[[0-9]+\])?:|Makefile[.:])' || true
+            local openwrt_root="$PWD"
             
-            source_lines="$(make -s DUMP=1 "${pkg_dir}/dumpinfo" 2>/dev/null \
-              | sed -n 's/^Source: //p' \
-              | sed 's/\r$//' \
-              | sed 's/^[[:space:]]*//' \
-              | sed 's/[[:space:]]*$//')" || true
+            source_lines="$(
+              cd "$pkg_dir" &&
+              make -s -f Makefile \
+                TOPDIR="$openwrt_root" \
+                DUMP=1 \
+                dumpinfo 2>/dev/null \
+                | sed -n 's/^Source: //p' \
+                | sed 's/\r$//' \
+                | sed 's/^[[:space:]]*//' \
+                | sed 's/[[:space:]]*$//'
+            )" || true
             
             local source_count
             source_count="$(printf '%s\n' "$source_lines" | sed '/^$/d' | wc -l)"
