@@ -11,7 +11,7 @@
 # 5. [SDC v2.0 Strict] 導入整份 Makefile 無損快照；任何可恢復異常皆觸發原始狀態回滾，遭拒時強制保留備份現場並中止 CI。寫入後強制校驗 Exact-One 配置。
 # 6. [Strict No-Guess Resolution] SDC 僅接受 dumpinfo 解析出的「剛好一個」Exact Source；下載、驗證、寫入任一階段失敗即完整回滾並中止 CI。
 # 7. [Strict Build] 保留 Parallel Build 失敗後的狀態，直接降級 -j1 V=s；以精確的 BUILD_RESULT/BUILD_MODE 雙變數回報並落盤 build-status.txt。
-# 8. 顯式宣告 CONFIG_USE_APK=y；透過「Config 原生禁用 → Defconfig 收斂 → Post-Defconfig 正向/反向雙重審計 → 最終 Manifest 雙向審計」完成完整的狀態封鎖，徹底排拒 block-mount 等干擾項。
+# 8. 顯式宣告 CONFIG_USE_APK=y；透過「Config 原生禁用 → Defconfig 收斂 → Post-Defconfig 正向/反向雙重審計 → 最終 Manifest 雙向審計」完成完整的狀態封鎖，徹底排拒 block-mount 與 automount 等干擾項。
 # 9. [Snapshot Native Track] 雙核心滿血火力全開：完整編譯並保留 Xray-core 與 Sing-box 核心，驗證上游最新分流元件穩定性。
 # 10. [CCACHE 加速] 完全交予 OpenWrt 底層接管，搭配 ccache -z 歸零觀測與並行 Retry 機制。
 # 11. [Node 24 Ready & Platform Longevity] 執行環境遷移至 ubuntu-24.04，採用 Node 24 相容的 Actions 版本，並透過 FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 預先指定 Actions runtime 使用 Node 24，降低後續 Actions 遷移風險。
@@ -24,7 +24,7 @@ name: Build ImmWrt Master Snapshot V2
 on:
   workflow_dispatch:
 #  schedule:
-#    - cron: '26 14 * * 0,2,4,6' # UTC 14:26 = HKT 22:26 (每週日、二、四、六)
+#    - cron: '26 14 * * 0,2,4,6'
 
 concurrency:
   group: immwrt-build
@@ -156,7 +156,7 @@ jobs:
           echo "▶️ [Step] Updating base feeds..."
           retry timeout 35m ./scripts/feeds update -a
           
-          # ✅ 物理防護 - 徹底切斷 upstream 舊版 PassWall 生態供應鏈
+          # ✅ 物理防護 - 徹底切斷 upstream 舊版 PassWall 生態供應鏈與 automount 依賴
           PASSWALL_UPSTREAM_PKGS="
           xray-core
           v2ray-geodata
@@ -182,7 +182,8 @@ jobs:
           ./scripts/feeds uninstall \
             luci-app-passwall \
             luci-app-fstab \
-            luci-app-plugins || true
+            luci-app-plugins \
+            automount || true
             
           for pkg in $PASSWALL_UPSTREAM_PKGS; do
             rm -rf \
@@ -195,7 +196,10 @@ jobs:
             feeds/luci/applications/luci-app-plugins \
             package/feeds/luci/luci-app-passwall \
             package/feeds/luci/luci-app-fstab \
-            package/feeds/luci/luci-app-plugins
+            package/feeds/luci/luci-app-plugins \
+            package/emortal/automount \
+            package/feeds/packages/automount \
+            feeds/packages/utils/automount
           
           echo "▶️ [Step] Cloning Passwall ecosystem (Latest Upstream with Timeout)..."
           retry bash -c 'timeout 15m git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/openwrt-passwall-packages'
@@ -331,6 +335,14 @@ jobs:
           fi
 
           echo "✅ Rust host build patch applied: download-ci-llvm=false"
+          # =====================================================
+
+          # =====================================================
+          # 🚫 Target Default Packages Stripping (block-mount & automount)
+          # =====================================================
+          find target/linux/x86/ -type f \( -name "Makefile" -o -name "*.mk" \) -exec sed -i -E 's/\b(block-mount|automount)\b//g' {} +
+          sed -i -E '/define Package\/block-mount/,/endef/ s/DEFAULT:=.*//' package/system/fstools/Makefile 2>/dev/null || true
+          echo "✅ Target default package stripping applied for block-mount & automount"
           # =====================================================
 
           # 全域精準破壞前端選單殘留節點（以特徵篩選，避免無關套件的上游語法缺陷導致解析中斷）
@@ -1618,6 +1630,7 @@ jobs:
             echo "CONFIG_PACKAGE_kmod-virtio-blk=y"
             echo "CONFIG_PACKAGE_kmod-nft-offload=y"
             echo "# CONFIG_PACKAGE_block-mount is not set"
+            echo "# CONFIG_PACKAGE_automount is not set"
             echo "# CONFIG_PACKAGE_luci-app-fstab is not set"
             echo "# CONFIG_PACKAGE_luci-app-plugins is not set"
             echo "CONFIG_DEVEL=y"
@@ -1811,7 +1824,7 @@ jobs:
           echo "✅ Required core configuration audit passed"
 
           echo "=== 🔒 Post-Defconfig Forbidden Package Audit ==="
-          for p in block-mount luci-app-fstab luci-app-plugins; do
+          for p in block-mount automount luci-app-fstab luci-app-plugins; do
             if grep -Eq "^CONFIG_PACKAGE_${p}=[ym]" .config; then
               echo "❌ FORBIDDEN PACKAGE ENABLED AFTER DEFCONFIG: $p"
               exit 1
@@ -1948,7 +1961,7 @@ jobs:
           fi
           
           echo "=== 🔒 Final Manifest Package Audit ==="
-          for p in block-mount luci-app-fstab luci-app-plugins; do
+          for p in block-mount automount luci-app-fstab luci-app-plugins; do
             if awk -v pkg="$p" '$1 == pkg {found=1} END {exit found ? 0 : 1}' release_assets/installed-packages.txt; then
               echo "❌ FORBIDDEN PACKAGE FOUND IN FINAL MANIFEST: $p"
               exit 1
@@ -2042,7 +2055,7 @@ jobs:
           body: |
             ### 🧪 ImmWrt Master Snapshot — Experimental Production-Sealed Candidate
             - **顯式宣告 APK**：在設定檔中明確宣告 `CONFIG_USE_APK=y`，鎖定底層套件管理架構。
-            - **四重狀態封鎖 (State Blocking)**：透過「Kconfig 原生禁用 → Defconfig 收斂 → Post-Defconfig 正向/反向審計 → 最終 Manifest 雙向審計」，徹底杜絕 `block-mount`、`luci-app-fstab` 與 `luci-app-plugins` 等依賴回歸。
+            - **四重狀態封鎖 (State Blocking)**：透過「Kconfig 原生禁用 → Defconfig 收斂 → Post-Defconfig 正向/反向審計 → 最終 Manifest 雙向審計」，徹底杜絕 `block-mount`、`automount`、`luci-app-fstab` 與 `luci-app-plugins` 等依賴回歸。
             - **嚴格驗證機制**：Post-Defconfig 深度配置審計（含正向核心合約檢查）；最終韌體 Manifest 缺失致命化；SHA256 校驗強制完全比對，拒絕寬容通過。
             - **PassWall 最新主幹同步**：即時拉取最新 `openwrt-passwall` 與 `openwrt-passwall-packages` 最新 commit。
             - **備份引擎升級**：內建 `ib v1.8` 黃金基準垂直排版版，解耦套件強依賴，確保跨版本配置恢復安全。
