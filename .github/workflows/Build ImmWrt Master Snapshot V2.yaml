@@ -377,7 +377,7 @@ jobs:
             
             # Strict Exact-One Source resolution
             local source_lines=""
-            source_lines="$(make -s "${pkg_dir}/dumpinfo" 2>/dev/null \
+            source_lines="$(make -s DUMP=1 "${pkg_dir}/dumpinfo" 2>/dev/null \
               | sed -n 's/^Source: //p' \
               | sed 's/\r$//' \
               | sed 's/^[[:space:]]*//' \
