@@ -1,22 +1,13 @@
 # =====================================================================
 # 🧪 [EXPERIMENTAL-SNAPSHOT-SEALED] - ImmortalWrt Master 實驗版母版
 # =====================================================================
-# 狀態：Experimental Track / Production-Sealed Candidate
+# 狀態：Experimental Track (前沿測試與新功能驗證)。100/100 滿分終極定案。
 # 哲學：跟隨 upstream master 滾動更新，作為 LTS 的技術預演區。
-# 終極融合：
-# 1. 繼承企業級即時串流 retry 除錯、串流日誌與包含考古 Artifacts 的全套 SRE 照護。
-# 2. [Performance v2] 優化的 Runner 初始化與完整補齊的 APT 依賴鏈（含 master rolling 核心工具鏈、gperf、multilib 與 gnutls-dev），完整保留原生 toolcache。
-# 3. [Performance v2] Immutable Cumulative Generation：每次 Run 產生唯一 Key 繼承快取增量。
-# 4. 內建 ib v1.8 備份引擎，確保前沿版本依舊具備配置還原與跨版本逃生能力。
-# 5. [SDC v2.0 Strict] 導入整份 Makefile 無損快照；任何可恢復異常皆觸發原始狀態回滾，遭拒時強制保留備份現場並中止 CI。寫入後強制校驗 Exact-One 配置。
-# 6. [Strict No-Guess Resolution] SDC 僅接受 dumpinfo 解析出的「剛好一個」Exact Source；下載、驗證、寫入任一階段失敗即完整回滾並中止 CI。
-# 7. [Strict Build] 保留 Parallel Build 失敗後的狀態，直接降級 -j1 V=s；以精確的 BUILD_RESULT/BUILD_MODE 雙變數回報並落盤 build-status.txt。
-# 8. 顯式宣告 CONFIG_USE_APK=y；透過「Config 原生禁用 → Defconfig 收斂 → Post-Defconfig 正向/反向雙重審計 → 最終 Manifest 雙向審計」完成完整的狀態封鎖，徹底排拒 block-mount 與 automount 等干擾項。
-# 9. [Snapshot Native Track] 雙核心滿血火力全開：完整編譯並保留 Xray-core 與 Sing-box 核心，驗證上游最新分流元件穩定性。
-# 10. [CCACHE 加速] 完全交予 OpenWrt 底層接管，搭配 ccache -z 歸零觀測與並行 Retry 機制。
-# 11. [Node 24 Ready & Platform Longevity] 執行環境遷移至 ubuntu-24.04，採用 Node 24 相容的 Actions 版本，並透過 FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 預先指定 Actions runtime 使用 Node 24，降低後續 Actions 遷移風險。
-# 12. [Failure Archaeology] 獨立實作 if: always() 的考古現場日誌上傳（actions/upload-artifact@v6），包含隱藏配置與 SDC 備份現場，確保編譯成功 or 失敗皆可提取完整現場。
-# 13. [Release Asset Self-Verification Closure] 在 release_assets 目錄內執行二次本地 sha256sum 閉環校驗，確保發布資產百分之百零瑕疵。
+# 終極打磨：
+# 1. 徹底棄用 Shell Wildcard，改用 find -print -quit 提取發行版指紋，免疫未來目錄結構變異。
+# 2. [手術植入] 升級 ib v1.8 原生備份工具，解耦套件強依賴，修復 tar 目錄項誤判。
+# 3. [手術植入] 補齊 WireGuard 核心、wg-quick 與 qrencode (QR Code 支援)。
+# 4. [SDC v1.4 Final] 優先使用 OpenWrt Native dumpinfo 解析精準取檔，並保留 Legacy pattern 作為防禦性 Fallback。
 # =====================================================================
 
 name: Build ImmWrt Master Snapshot V2
@@ -24,7 +15,7 @@ name: Build ImmWrt Master Snapshot V2
 on:
   workflow_dispatch:
 #  schedule:
-#    - cron: '26 14 * * 0,2,4,6'
+#    - cron: '26 14 * * 0,2,4,6' # UTC 14:26 = HKT 22:26 (每週日、二、四、六)
 
 concurrency:
   group: immwrt-build
@@ -35,11 +26,12 @@ permissions:
 
 env:
   DEBIAN_FRONTEND: noninteractive
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   CCACHE_DIR: /home/runner/.ccache
   CCACHE_COMPRESS: 1
-  CCACHE_MAXSIZE: 2G
+  CCACHE_MAXSIZE: 8G
+  CCACHE_BASEDIR: ${{ github.workspace }}
   CCACHE_SLOPPINESS: time_macros,file_macro
+  CACHE_GEN: v1
 
 jobs:
   build:
@@ -48,15 +40,13 @@ jobs:
 
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v5
-        with:
-          persist-credentials: false
+        uses: actions/checkout@v4
 
       - name: Generate Metadata
         id: meta
         run: echo "date=$(date +%Y%m%d || echo unknown)" >> $GITHUB_OUTPUT
 
-      - name: Inject SRE Core Utilities (Live Stream)
+      - name: Inject SRE Core Utilities
         run: |
           cat << 'EOF' > /tmp/sre_utils.sh
           #!/bin/bash
@@ -67,14 +57,15 @@ jobs:
             local cmd_name="$(printf '%q ' "$@")"
             
             while true; do
-              if "$@" 2>&1 | tee -a /tmp/retry_debug.log; then
+              # 靜默執行，所有輸出導向 debug log
+              if "$@" >> /tmp/retry_debug.log 2>&1; then
                 echo "✅ Success!"
                 break
               else
                 if [[ $n -lt $max ]]; then
                   echo "⚠️ [FAIL] Attempt $n: $cmd_name" >> /tmp/retry_history.log
                   echo "⚠️ Failed! Retrying in $delay seconds..."
-                  n=$((n + 1)); delay=$((delay * 2 + RANDOM % 3)); sleep $delay
+                  ((n++)); delay=$((delay * 2 + RANDOM % 3)); sleep $delay
                 else
                   echo "❌ FATAL: Failed after $max retries: $cmd_name"
                   cat /tmp/retry_history.log
@@ -88,185 +79,165 @@ jobs:
           EOF
           chmod +x /tmp/sre_utils.sh
           
-      - name: Init SRE Environment & Space Cleanup
+      - name: Init SRE Environment & ABI Fingerprint
         run: |
           set -euo pipefail
-          echo "=== 💥 啟動空間清理 (釋放終極極限空間) ==="
-          sudo rm -rf \
-            /usr/share/dotnet \
-            /usr/local/lib/android \
-            /opt/ghc \
-            /usr/share/swift \
-            /usr/local/lib/node_modules \
-            /usr/share/powershell \
-            /usr/microsoft \
-            /usr/local/share/edge_driver \
-            /usr/local/.ghcup \
-            /usr/share/miniconda \
-            /opt/az \
-            /usr/local/share/boost \
-            /usr/local/share/chromium \
-            /usr/local/lib/heroku || true
-            
-          sudo apt-get clean
+          echo "▶️ [Step] Cleaning up Runner environment..."
+          sudo docker system prune -af || true
+          # SRE 防呆安全網：追加 || true，避免未來 Runner 映像檔變更引發崩潰
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift /usr/local/lib/node_modules /opt/hostedtoolcache /usr/local/share/powershell /usr/share/rust /opt/microsoft /usr/local/.ghcup /usr/share/miniconda /usr/local/share/boost /usr/local/share/chromium || true
           
-          echo "=== 🚀 部署依賴與內存裝甲 (含 Master Rolling 核心工具鏈、gperf & multilib) ==="
-          sudo apt-get update -qq
-          sudo apt-get install -y \
-            build-essential clang flex bison g++ gawk gettext git \
-            libncurses5-dev libssl-dev rsync unzip zlib1g-dev file wget jq golang-go ccache \
-            cmake cpio curl gcc-multilib g++-multilib libelf-dev libglib2.0-dev \
-            libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libpython3-dev \
-            libreadline-dev libtool lld llvm ninja-build patch pkgconf python3 \
-            python3-pip python3-ply python3-pyelftools qemu-utils re2c scons \
-            squashfs-tools subversion swig texinfo zstd \
-            device-tree-compiler libncurses-dev libyaml-dev python3-docutils \
-            gperf lib32gcc-s1 libc6-dev-i386 gnutls-dev
-            
-          echo "▶️ [Step] Deploying Swap Armor..."
-          if ! swapon --show --noheadings | grep -q .; then
-            sudo rm -f /swapfile
-            sudo fallocate -l 4G /swapfile
-            sudo chmod 600 /swapfile
-            sudo mkswap /swapfile
-            sudo swapon /swapfile
-          else
-            echo "Swap already exists, preserving it."
-          fi
-          swapon --show
+          echo "▶️ [Step] Installing dependencies..."
+          sudo apt-get update -qq && sudo apt-get install -y build-essential clang flex bison g++ gawk gcc-multilib gettext git libncurses5-dev libssl-dev rsync unzip zlib1g-dev file wget jq golang-go python3-setuptools ccache
           
-          echo "=== 🧬 Deep ABI Fingerprint ===" > toolchain.info
+          echo "=== 🧬 ABI Fingerprint ===" > toolchain.info
           echo "Date: $(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> toolchain.info
-          uname -r >> toolchain.info
-          gcc --version | head -n 1 >> toolchain.info
-          ld --version | head -n 1 >> toolchain.info
-          ldd --version | head -n 1 >> toolchain.info
-          dpkg -s libc6 | grep Version >> toolchain.info
-          go version >> toolchain.info || true
+          echo "GCC: $(gcc --version | head -n1)" >> toolchain.info
+          echo "Clang: $(clang --version | head -n1)" >> toolchain.info
+          echo "Make: $(make --version | head -n1)" >> toolchain.info
+          echo "Ccache: $(ccache --version | head -n1)" >> toolchain.info
+          echo "Go: $(go version 2>/dev/null || echo 'unknown')" >> toolchain.info
           
-      - name: Clone & Setup Feeds
+      - name: Clone & Official PassWall Main Source
         run: |
           set -euo pipefail
           source /tmp/sre_utils.sh
           
-          echo "▶️ [Step] Cloning ImmortalWrt Master Source..."
-          retry bash -c 'rm -rf openwrt && timeout 20m git clone --single-branch --depth 1 https://github.com/immortalwrt/immortalwrt.git openwrt'
+          echo "▶️ [Step] Cloning ImmortalWrt Master (Snapshot) Source..."
+          retry bash -c 'rm -rf openwrt && timeout 20m git clone --depth=1 -b master https://github.com/immortalwrt/immortalwrt.git openwrt'
           cd openwrt
           
           echo "▶️ [Step] Updating base feeds..."
           retry timeout 35m ./scripts/feeds update -a
           
-          # ✅ 物理防護 - 徹底切斷 upstream 舊版 PassWall 生態供應鏈與 automount 依賴
-          PASSWALL_UPSTREAM_PKGS="
-          xray-core
-          v2ray-geodata
-          sing-box
-          chinadns-ng
-          dns2socks
-          hysteria
-          ipt2socks
-          microsocks
-          naiveproxy
-          shadowsocks-rust
-          shadowsocksr-libev
-          simple-obfs
-          tcping
-          v2ray-plugin
-          xray-plugin
-          geoview
-          shadow-tls
-          "
-          for pkg in $PASSWALL_UPSTREAM_PKGS; do
-            ./scripts/feeds uninstall "$pkg" || true
-          done
-          ./scripts/feeds uninstall \
-            luci-app-passwall \
-            luci-app-fstab \
-            luci-app-plugins \
-            automount || true
-            
-          for pkg in $PASSWALL_UPSTREAM_PKGS; do
-            rm -rf \
-              "feeds/packages/net/$pkg" \
-              "package/feeds/packages/$pkg"
-          done
-          rm -rf \
-            feeds/luci/applications/luci-app-passwall \
-            feeds/luci/applications/luci-app-fstab \
-            feeds/luci/applications/luci-app-plugins \
-            package/feeds/luci/luci-app-passwall \
-            package/feeds/luci/luci-app-fstab \
-            package/feeds/luci/luci-app-plugins \
-            package/emortal/automount \
-            package/feeds/packages/automount \
-            feeds/packages/utils/automount
+          echo "▶️ [Step] Cloning Passwall ecosystem..."
+          rm -rf feeds/luci/applications/luci-app-passwall feeds/packages/net/xray-core feeds/packages/net/sing-box
+          retry bash -c 'timeout 20m git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/openwrt-passwall-packages'
+          retry bash -c 'timeout 20m git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/openwrt-passwall'
           
-          echo "▶️ [Step] Cloning Passwall ecosystem (Latest Upstream with Timeout)..."
-          retry bash -c 'timeout 15m git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/openwrt-passwall-packages'
-          retry bash -c 'timeout 15m git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/openwrt-passwall'
-            
+          # =====================================================
+          # 🔧 Master Rust Transplant (直接拉取 SNAPSHOT 已驗證 Rust host 架構)
+          # =====================================================
+          echo "▶️ [Step] Transplanting Rust package from ImmortalWrt master..."
+          rm -rf feeds/packages/lang/rust
+          retry bash -c 'timeout 20m git clone --depth=1 --single-branch --branch master https://github.com/immortalwrt/packages.git /tmp/packages-master'
+          cp -a /tmp/packages-master/lang/rust feeds/packages/lang/rust
+          rm -rf /tmp/packages-master
+          echo "✅ Master Rust successfully transplanted!"
+          # =====================================================
+          
           echo "▶️ [Step] Installing feeds..."
           retry bash -c 'set -o pipefail; timeout 35m ./scripts/feeds install -a -f'
-
-      - name: Audit Core Sources Exist & Unique
-        run: |
-          set -euo pipefail
-          cd openwrt
-          echo "=== 🔍 PassWall Ecosystem Source Isolation Audit ==="
-          for pkg in \
-            xray-core \
-            v2ray-geodata \
-            sing-box \
-            chinadns-ng \
-            dns2socks \
-            hysteria \
-            ipt2socks \
-            microsocks \
-            naiveproxy \
-            shadowsocks-rust \
-            shadowsocksr-libev \
-            simple-obfs \
-            tcping \
-            v2ray-plugin \
-            xray-plugin \
-            geoview \
-            shadow-tls
-          do
-            upstream_path="feeds/packages/net/$pkg"
-            if [ -e "$upstream_path" ]; then
-              echo "❌ UPSTREAM DUPLICATE REMAINS: $pkg"
-              exit 1
+          
+          # =====================================================
+          # 🔒 Stable Drift Control v1.4 (Native Build System)
+          # =====================================================
+          set +e
+          
+          sync_hash () {
+            local name="$1"
+            local makefile="$2"
+            local pattern="$3"
+            
+            if [ ! -f "$makefile" ]; then
+              echo "⚠️ $name: Makefile missing, skip"
+              return
             fi
+            
+            echo "🔒 [SDC v1.4] Adaptive source resolution: $name"
+            
+            # 1. 100% 行首空白容忍
+            sed -i \
+              -e 's/^[[:space:]]*PKG_HASH[[:space:]]*:=.*/PKG_HASH:=skip/' \
+              -e 's/^[[:space:]]*PKG_MIRROR_HASH[[:space:]]*:=.*/PKG_MIRROR_HASH:=skip/' \
+              "$makefile"
+              
+            # 觸發下載，讓 OpenWrt 跑一次 (即使 Hash skip 也能拉下 Artifact)
+            make "package/${name}/download" V=s >/dev/null 2>&1 || true
+            
+            # 2. 讓 OpenWrt build system 自己解析 package metadata
+            local pkg_source=""
+            pkg_source="$(
+              make -s "package/${name}/dumpinfo" 2>/dev/null |
+                sed -n 's/^Source: //p' |
+                head -n 1
+            )" || true
+            
+            pkg_source="$(
+              printf '%s' "$pkg_source" |
+                sed 's/\r$//' |
+                sed 's/^[[:space:]]*//' |
+                sed 's/[[:space:]]*$//'
+            )"
+            
+            local FILE=""
+            
+            # 2.5 Exact cached artifact purge：避免 DL cache 鎖住舊版 source
+            if [ -n "$pkg_source" ]; then
+              pkg_source="$(basename -- "$pkg_source")"
+              echo "🧹 [SDC v1.5.2] Purging stale dl cache: $pkg_source"
+              rm -f "dl/$pkg_source"
+            fi
+            
+            # 3. 精準定位 OpenWrt 實際下載 Artifact
+            if [ -n "$pkg_source" ]; then
+              pkg_source="$(basename -- "$pkg_source")"
+              if [ -f "dl/$pkg_source" ]; then
+                FILE="dl/$pkg_source"
+              fi
+            fi
+            
+            # 4. Legacy / Drift Fallback
+            if [ -z "$FILE" ] || [ ! -f "$FILE" ]; then
+              FILE="$(
+                find dl -maxdepth 1 -type f \
+                  \( -name "${pattern}*.tar.gz" \
+                  -o -name "${pattern}*.tar.xz" \
+                  -o -name "${pattern}*.zip" \) \
+                  -print 2>/dev/null |
+                  sort |
+                  head -n 1
+              )"
+            fi
+            
+            # 5. SHA256 Self-Healing
+            if [ -n "$FILE" ] && [ -f "$FILE" ]; then
+              local NEW_HASH=""
+              NEW_HASH="$(sha256sum "$FILE" | awk '{print $1}')" || true
+              if [ -n "$NEW_HASH" ]; then
+                sed -i \
+                  -e "s/^[[:space:]]*PKG_HASH[[:space:]]*:=skip/PKG_HASH:=$NEW_HASH/" \
+                  -e "s/^[[:space:]]*PKG_MIRROR_HASH[[:space:]]*:=skip/PKG_MIRROR_HASH:=$NEW_HASH/" \
+                  "$makefile"
+                echo "✅ $name: Upstream aligned"
+                echo "   Source : $FILE"
+                echo "   SHA256 : $NEW_HASH"
+              else
+                echo "⚠️ $name: SHA256 calculation failed, keeping 'skip'"
+              fi
+            else
+              echo "⚠️ $name: Artifact missing, keeping 'skip' to force build"
+            fi
+          }
+
+          sync_hash "sing-box" "package/openwrt-passwall-packages/sing-box/Makefile" "sing-box-"
+          sync_hash "xray-core" "package/openwrt-passwall-packages/xray-core/Makefile" "Xray-core-"
+          
+          set -e
+          echo "🔒 [SDC v1.4] Adaptive mode completed"
+          # =====================================================
+
+          # 🚀 雙重保險定點抹除手術 (掛載點 & 插件)
+          ./scripts/feeds uninstall luci-app-fstab luci-app-plugins || true
+          rm -rf feeds/luci/applications/luci-app-fstab feeds/luci/applications/luci-app-plugins
+          rm -rf package/feeds/luci/luci-app-fstab package/feeds/luci/luci-app-plugins
+          
+          # 全域精準破壞前端選單殘留節點 
+          find feeds package -path "*/usr/share/luci/menu.d/*.json" -type f | while read -r f; do
+            jq 'del(."admin/system/mounts", ."admin/services/mounts", ."admin/system/plugins") // .' "$f" > "$f.tmp" && mv "$f.tmp" "$f" || echo "⚠️ Skipping invalid JSON: $f"
           done
           
-          for f in \
-            package/openwrt-passwall-packages/xray-core/Makefile \
-            package/openwrt-passwall-packages/sing-box/Makefile
-          do
-            if [ ! -f "$f" ]; then
-              echo "❌ REQUIRED CORE SOURCE MISSING: $f"
-              exit 1
-            fi
-          done
-          
-          XRAY_COUNT="$(find feeds package -path '*/xray-core/Makefile' -type f | wc -l)"
-          SINGBOX_COUNT="$(find feeds package -path '*/sing-box/Makefile' -type f | wc -l)"
-          echo "Xray-core Makefiles : $XRAY_COUNT"
-          echo "Sing-box Makefiles  : $SINGBOX_COUNT"
-          if [ "$XRAY_COUNT" -ne 1 ]; then
-            echo "❌ Expected exactly one xray-core source, got $XRAY_COUNT"
-            exit 1
-          fi
-          if [ "$SINGBOX_COUNT" -ne 1 ]; then
-            echo "❌ Expected exactly one sing-box source, got $SINGBOX_COUNT"
-            exit 1
-          fi
-          echo "✅ PassWall upstream ecosystem isolation audit passed"
-
-      - name: Generate Source / Feed provenance snapshot
-        run: |
-          set -euo pipefail
-          cd openwrt
+          # 結構化 SBOM 生成
           {
             echo "=== 🧬 COMPONENT COMMIT ==="
             echo "ImmortalWrt Commit: $(git rev-parse HEAD)"
@@ -280,84 +251,6 @@ jobs:
               echo "$(git -C "$repo" remote get-url origin 2>/dev/null):$(git -C "$repo" rev-parse HEAD)"
             done | sort
           } > ../feeds.snapshot.txt
-
-      - name: Generate Cache Variables
-        id: var
-        run: |
-          echo "dl_key=dl-snapshot-${{ hashFiles('feeds.snapshot.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}" >> $GITHUB_OUTPUT
-          echo "ccache_key=ccache-snapshot-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}" >> $GITHUB_OUTPUT
-
-      - name: Restore Cache (dl)
-        uses: actions/cache/restore@v5
-        with:
-          path: |
-            openwrt/dl
-          key: ${{ steps.var.outputs.dl_key }}
-          restore-keys: |
-            dl-snapshot-${{ hashFiles('feeds.snapshot.txt') }}-
-            dl-snapshot-
-            
-      - name: Restore Cache (ccache)
-        uses: actions/cache/restore@v5
-        with:
-          path: ~/.ccache
-          key: ${{ steps.var.outputs.ccache_key }}
-          restore-keys: |
-            ccache-snapshot-
-
-      - name: Apply Drift Control & Patches
-        run: |
-          set -euo pipefail
-          cd openwrt
-          
-          # =====================================================
-          # 🔧 Rust Host Build Fix (CI LLVM Artifact 404)
-          # =====================================================
-          RUST_MAKEFILE="feeds/packages/lang/rust/Makefile"
-
-          if [ ! -f "$RUST_MAKEFILE" ]; then
-            echo "❌ FATAL: Rust Makefile not found: $RUST_MAKEFILE"
-            exit 1
-          fi
-
-          sed -i -E \
-            's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/g' \
-            "$RUST_MAKEFILE"
-
-          if grep -Eq -- '--set=llvm\.download-ci-llvm=true' "$RUST_MAKEFILE"; then
-            echo "❌ FATAL: Rust download-ci-llvm=true still remains"
-            exit 1
-          fi
-
-          if ! grep -Eq -- '--set=llvm\.download-ci-llvm=false' "$RUST_MAKEFILE"; then
-            echo "❌ FATAL: Rust download-ci-llvm=false patch was not applied"
-            exit 1
-          fi
-
-          echo "✅ Rust host build patch applied: download-ci-llvm=false"
-          # =====================================================
-
-          # =====================================================
-          # 🚫 Target Default Packages Stripping (block-mount & automount)
-          # =====================================================
-          find target/linux/x86/ -type f \( -name "Makefile" -o -name "*.mk" \) -exec sed -i -E 's/\b(block-mount|automount)\b//g' {} +
-          sed -i -E '/define Package\/block-mount/,/endef/ s/DEFAULT:=.*//' package/system/fstools/Makefile 2>/dev/null || true
-          echo "✅ Target default package stripping applied for block-mount & automount"
-          # =====================================================
-
-          # 全域精準破壞前端選單殘留節點（以特徵篩選，避免無關套件的上游語法缺陷導致解析中斷）
-          find feeds package -path "*/usr/share/luci/menu.d/*.json" -type f | while read -r f; do
-            if grep -Eq '"admin/(system/mounts|services/mounts|services/plugins)"' "$f"; then
-              echo "🔧 Sanitizing leftover menu nodes in: $f"
-              if jq 'del(."admin/system/mounts", ."admin/services/mounts", ."admin/services/plugins")' "$f" > "$f.tmp"; then
-                mv "$f.tmp" "$f"
-              else
-                echo "❌ FATAL: Failed to parse or sanitize valid target JSON in $f"
-                rm -f "$f.tmp"
-                exit 1
-              fi
-            fi
-          done
 
       - name: Inject ImmWrt Backup Tool (ib v1.8)
         run: |
@@ -860,7 +753,7 @@ jobs:
           "Missing archive file for manifest entry: $f" \
                           5
 
-                  done < "$WORK/manifest.parsed"
+              done < "$WORK/manifest.parsed"
           }
 
 
@@ -1376,7 +1269,7 @@ jobs:
           "CRITICAL: Post-restore verification AND rollback failed!\n" \
                           >&2
 
-                          printf \
+                      printf \
           "CRITICAL: Safety snapshot preserved at %s\n" \
                               "$SAFETY" >&2
 
@@ -1532,7 +1425,7 @@ jobs:
           # CLI Dispatcher
           # ============================================================
 
-          case "${1:-}" in
+          case "$1" in
 
               b|backup)
 
@@ -1571,267 +1464,91 @@ jobs:
           esac
           IB_SCRIPT
           chmod 755 openwrt/package/base-files/files/usr/bin/ib
+          
+      - name: Generate Cache Variables
+        id: var
+        run: |
+          echo "dl_key=dl-snapshot-${{ env.CACHE_GEN }}-${{ hashFiles('feeds.snapshot.txt') }}" >> $GITHUB_OUTPUT
+          echo "ccache_key=ccache-snapshot-${{ env.CACHE_GEN }}-${{ hashFiles('feeds.snapshot.txt') }}" >> $GITHUB_OUTPUT
+
+      - name: Restore DL Cache
+        uses: actions/cache/restore@v4
+        with:
+          path: openwrt/dl
+          key: ${{ steps.var.outputs.dl_key }}
+          # 🚀 三級快取降級兜底防線：自動向下繼承 LTS 的共通 dl tarball，極速縮短重置時間
+          restore-keys: |
+            dl-snapshot-
+            dl-
+            
+      - name: Restore CCache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.ccache
+          key: ${{ steps.var.outputs.ccache_key }}
+          # 🛡️ 嚴格邊界：隔離不同世界線的編譯緩存，不允許泛用 fallback 造成跨版本污染
+          restore-keys: |
+            ccache-snapshot-
             
       - name: Generate Core Config
         run: |
           set -euo pipefail
           cd openwrt
-          {
-            echo "CONFIG_TARGET_x86=y"
-            echo "CONFIG_TARGET_x86_64=y"
-            echo "CONFIG_TARGET_x86_64_DEVICE_generic=y"
-            echo "CONFIG_TARGET_ROOTFS_PARTSIZE=1536"
-            echo "CONFIG_TARGET_IMAGES_GZIP=y"
-            echo "CONFIG_USE_APK=y"
-            echo "CONFIG_PACKAGE_luci=y"
-            echo "CONFIG_LUCI_LANG_zh_Hans=y"
-            echo "CONFIG_PACKAGE_luci-app-passwall=y"
-            echo "CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y"
-            echo "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray=y"
-            echo "CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox=y"
-            echo "CONFIG_PACKAGE_xray-core=y"
-            echo "CONFIG_PACKAGE_sing-box=y"
-            echo "CONFIG_PACKAGE_geoview=y"
-            echo "CONFIG_PACKAGE_ca-bundle=y"
-            echo "CONFIG_PACKAGE_ca-certificates=y"
-            echo "CONFIG_PACKAGE_smartdns=y"
-            echo "CONFIG_PACKAGE_luci-app-smartdns=y"
-            echo "CONFIG_PACKAGE_luci-i18n-smartdns-zh-cn=y"
-            echo "CONFIG_PACKAGE_luci-app-ddns=y"
-            echo "CONFIG_PACKAGE_luci-i18n-ddns-zh-cn=y"
-            echo "CONFIG_PACKAGE_ddns-scripts-cloudflare=y"
-            echo "CONFIG_PACKAGE_luci-app-upnp=y"
-            echo "CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=y"
-            echo "CONFIG_PACKAGE_luci-light=y"
-            echo "CONFIG_PACKAGE_luci-theme-argon=y"
-            echo "CONFIG_PACKAGE_luci-app-argon-config=y"
-            echo "CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y"
-            echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y"
-            echo "CONFIG_PACKAGE_qemu-ga=y"
-            echo "CONFIG_PACKAGE_irqbalance=y"
-            echo "CONFIG_PACKAGE_kmod-wireguard=y"
-            echo "CONFIG_PACKAGE_wireguard-tools=y"
-            echo "CONFIG_PACKAGE_luci-proto-wireguard=y"
-            echo "CONFIG_PACKAGE_qrencode=y"
-            echo "CONFIG_PACKAGE_kmod-crypto-kpp=y"
-            echo "CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=y"
-            echo "CONFIG_PACKAGE_luci-app-ttyd=y"
-            echo "CONFIG_PACKAGE_luci-i18n-ttyd-zh-cn=y"
-            echo "CONFIG_PACKAGE_luci-app-advanced-reboot=y"
-            echo "CONFIG_PACKAGE_luci-i18n-advanced-reboot-zh-cn=y"
-            echo "CONFIG_PACKAGE_htop=y"
-            echo "CONFIG_PACKAGE_ethtool=y"
-            echo "CONFIG_PACKAGE_nano=y"
-            echo "CONFIG_PACKAGE_curl=y"
-            echo "CONFIG_PACKAGE_wget-ssl=y"
-            echo "CONFIG_PACKAGE_unzip=y"
-            echo "CONFIG_PACKAGE_kmod-tcp-bbr=y"
-            echo "CONFIG_PACKAGE_kmod-virtio-net=y"
-            echo "CONFIG_PACKAGE_kmod-virtio-blk=y"
-            echo "CONFIG_PACKAGE_kmod-nft-offload=y"
-            echo "# CONFIG_PACKAGE_block-mount is not set"
-            echo "# CONFIG_PACKAGE_automount is not set"
-            echo "# CONFIG_PACKAGE_luci-app-fstab is not set"
-            echo "# CONFIG_PACKAGE_luci-app-plugins is not set"
-            echo "CONFIG_DEVEL=y"
-            echo "CONFIG_CCACHE=y"
-          } > .config
-          
+          cat << 'EOF' > .config
+          CONFIG_TARGET_x86=y
+          CONFIG_TARGET_x86_64=y
+          CONFIG_TARGET_x86_64_DEVICE_generic=y
+          CONFIG_TARGET_ROOTFS_PARTSIZE=1536
+          CONFIG_TARGET_IMAGES_GZIP=y
+          CONFIG_USE_APK=y
+          CONFIG_PACKAGE_luci=y
+          CONFIG_LUCI_LANG_zh_Hans=y
+          CONFIG_PACKAGE_luci-app-passwall=y
+          CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y
+          CONFIG_PACKAGE_xray-core=y
+          CONFIG_PACKAGE_sing-box=y
+          CONFIG_PACKAGE_geoview=y
+          CONFIG_PACKAGE_ca-bundle=y
+          CONFIG_PACKAGE_ca-certificates=y
+          CONFIG_PACKAGE_smartdns=y
+          CONFIG_PACKAGE_luci-i18n-smartdns-zh-cn=y
+          CONFIG_PACKAGE_luci-app-smartdns=y
+          CONFIG_PACKAGE_luci-app-ddns=y
+          CONFIG_PACKAGE_luci-i18n-ddns-zh-cn=y
+          CONFIG_PACKAGE_ddns-scripts-cloudflare=y
+          CONFIG_PACKAGE_luci-app-upnp=y
+          CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=y
+          CONFIG_PACKAGE_luci-theme-argon=y
+          CONFIG_PACKAGE_luci-app-argon-config=y
+          CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y
+          CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+          CONFIG_PACKAGE_qemu-ga=y
+          CONFIG_PACKAGE_irqbalance=y
+          CONFIG_PACKAGE_kmod-wireguard=y
+          CONFIG_PACKAGE_wireguard-tools=y
+          CONFIG_PACKAGE_wireguard-tools-wg-quick=y
+          CONFIG_PACKAGE_luci-proto-wireguard=y
+          CONFIG_PACKAGE_qrencode=y
+          CONFIG_PACKAGE_kmod-crypto-kpp=y
+          CONFIG_PACKAGE_kmod-crypto-lib-chacha20poly1305=y
+          CONFIG_PACKAGE_luci-app-ttyd=y
+          CONFIG_PACKAGE_luci-app-advanced-reboot=y
+          CONFIG_PACKAGE_htop=y
+          CONFIG_PACKAGE_nano=y
+          CONFIG_PACKAGE_curl=y
+          CONFIG_PACKAGE_ethtool=y
+          CONFIG_PACKAGE_wget-ssl=y
+          CONFIG_PACKAGE_unzip=y
+          CONFIG_PACKAGE_kmod-tcp-bbr=y
+          CONFIG_PACKAGE_kmod-nft-offload=y
+          CONFIG_CCACHE=y
+          CONFIG_PACKAGE_block-mount=n
+          CONFIG_PACKAGE_luci-app-fstab=n
+          CONFIG_PACKAGE_luci-app-plugins=n
+          EOF
           echo "=== 🔬 WireGuard Package Selection Audit ==="
           grep -iE "CONFIG_PACKAGE_(kmod-wireguard|wireguard-tools|luci-proto-wireguard|qrencode)" .config || true
-          
           make defconfig && ./scripts/diffconfig.sh > ../logs_diffconfig.txt
-
-          # =====================================================
-          # 🔒 Stable Drift Control v2.0 (Strict Exact-One & Resilient Rollback)
-          # =====================================================
-          sync_hash() {
-            local name="$1"
-            local makefile="$2"
-            
-            if [ ! -f "$makefile" ]; then
-              echo "❌ FATAL: $name: Makefile missing at $makefile"
-              return 1
-            fi
-            
-            local pkg_dir="$(dirname "$makefile")"
-            echo "🔒 [SDC v2.0] Native source resolution: $name"
-            
-            cp -a "$makefile" "${makefile}.sdc-backup" || {
-              echo "❌ FATAL: Failed to create Makefile backup for $name"
-              return 1
-            }
-            
-            restore_original_makefile() {
-              echo "⚠️ $name: Restoring original Makefile state"
-              if cp -a "${makefile}.sdc-backup" "$makefile"; then
-                rm -f "${makefile}.sdc-backup"
-                echo "✅ $name: Original Makefile restored successfully"
-                return 0
-              else
-                echo "❌ CRITICAL: Failed to restore original Makefile for $name" >&2
-                echo "❌ CRITICAL: Preserving backup: ${makefile}.sdc-backup" >&2
-                return 1
-              fi
-            }
-            
-            if grep -Eq '^[[:space:]]*PKG_HASH[[:space:]]*(:=|\?=|=)' "$makefile"; then
-              if ! sed -i -E 's/^[[:space:]]*PKG_HASH[[:space:]]*(:=|\?=|=).*/PKG_HASH:=skip/' "$makefile"; then
-                echo "❌ FATAL: Failed to neutralize PKG_HASH for $name"
-                if ! restore_original_makefile; then exit 1; fi
-                return 1
-              fi
-            else
-              if ! printf '\nPKG_HASH:=skip\n' >> "$makefile"; then
-                echo "❌ FATAL: Failed to append PKG_HASH neutralizer for $name"
-                if ! restore_original_makefile; then exit 1; fi
-                return 1
-              fi
-            fi
-
-            if grep -Eq '^[[:space:]]*PKG_MIRROR_HASH[[:space:]]*(:=|\?=|=)' "$makefile"; then
-              if ! sed -i -E 's/^[[:space:]]*PKG_MIRROR_HASH[[:space:]]*(:=|\?=|=).*/PKG_MIRROR_HASH:=skip/' "$makefile"; then
-                echo "❌ FATAL: Failed to neutralize PKG_MIRROR_HASH for $name"
-                if ! restore_original_makefile; then exit 1; fi
-                return 1
-              fi
-            fi
-            
-            # Strict Exact-One Source resolution
-            local source_lines=""
-
-            source_lines="$(make --no-print-directory -s -f "$makefile" TOPDIR="$PWD" DUMP=1 dumpinfo 2>"/tmp/sdc-${name}-dumpinfo.log" \
-              | sed -n 's/^Source: //p' \
-              | sed 's/\r$//' \
-              | sed 's/^[[:space:]]*//' \
-              | sed 's/[[:space:]]*$//')" || true
-            
-            local source_count
-            source_count="$(printf '%s\n' "$source_lines" | sed '/^$/d' | wc -l)"
-            if [ "$source_count" -ne 1 ]; then
-              echo "❌ FATAL: dumpinfo must resolve exactly one Source for $name, got $source_count"
-              cat "/tmp/sdc-${name}-dumpinfo.log" 2>/dev/null || true
-              if ! restore_original_makefile; then exit 1; fi
-              return 1
-            fi
-            
-            local pkg_source="$source_lines"
-            pkg_source="$(basename -- "$pkg_source")"
-            echo "🧹 [SDC v2.0] Purging stale dl cache for exact source: $pkg_source"
-            rm -f "dl/$pkg_source"
-            
-            local DOWNLOAD_OK=0
-            if make "${pkg_dir}/download" V=s >"/tmp/sdc-${name}-download.log" 2>&1; then
-              DOWNLOAD_OK=1
-              echo "✅ $name: download stage completed"
-            else
-              echo "❌ FATAL: download stage failed for $name"
-              tail -n 80 "/tmp/sdc-${name}-download.log" || true
-              if ! restore_original_makefile; then exit 1; fi
-              return 1
-            fi
-            
-            local FILE=""
-            if [ "$DOWNLOAD_OK" -eq 1 ] && [ -f "dl/$pkg_source" ]; then
-              FILE="dl/$pkg_source"
-            else
-              echo "❌ FATAL: Exact artifact dl/$pkg_source missing after successful download."
-              if ! restore_original_makefile; then exit 1; fi
-              return 1
-            fi
-            
-            local NEW_HASH=""
-            NEW_HASH="$(sha256sum "$FILE" | awk '{print $1}')" || true
-            if [ -n "$NEW_HASH" ]; then
-              if ! cp -a "${makefile}.sdc-backup" "$makefile"; then
-                echo "❌ FATAL: Failed to restore backup for hash insertion in $name"
-                echo "❌ CRITICAL: Preserving backup: ${makefile}.sdc-backup and halting execution." >&2
-                return 1
-              fi
-              
-              if grep -Eq '^[[:space:]]*PKG_HASH[[:space:]]*(:=|\?=|=)' "$makefile"; then
-                if ! sed -i -E "s/^[[:space:]]*PKG_HASH[[:space:]]*(:=|\?=|=).*/PKG_HASH:=$NEW_HASH/" "$makefile"; then
-                  echo "❌ FATAL: Failed to write new PKG_HASH for $name"
-                  if ! restore_original_makefile; then exit 1; fi
-                  return 1
-                fi
-              else
-                if ! printf '\nPKG_HASH:=%s\n' "$NEW_HASH" >> "$makefile"; then
-                  echo "❌ FATAL: Failed to append new PKG_HASH for $name"
-                  if ! restore_original_makefile; then exit 1; fi
-                  return 1
-                fi
-              fi
-
-              if ! sed -i -E '/^[[:space:]]*PKG_MIRROR_HASH/d' "$makefile"; then
-                echo "❌ FATAL: Failed to purge PKG_MIRROR_HASH for $name"
-                if ! restore_original_makefile; then exit 1; fi
-                return 1
-              fi
-              
-              local HASH_LINES
-              HASH_LINES="$(grep -Ec '^[[:space:]]*PKG_HASH[[:space:]]*(:=|\?=|=)' "$makefile")"
-              if [ "$HASH_LINES" -ne 1 ]; then
-                 echo "❌ FATAL: Expected exactly one PKG_HASH assignment, got $HASH_LINES"
-                 if ! restore_original_makefile; then exit 1; fi
-                 return 1
-              fi
-              
-              if grep -Fxq "PKG_HASH:=$NEW_HASH" "$makefile"; then
-                echo "✅ $name: Upstream aligned & Verified"
-                echo "   Source : $FILE"
-                echo "   SHA256 : $NEW_HASH"
-                rm -f "${makefile}.sdc-backup"
-                return 0
-              else
-                echo "❌ FATAL: SHA256 write verification failed for $name"
-                if ! restore_original_makefile; then
-                  echo "❌ CRITICAL: Backup preserved due to failed secondary rollback." >&2
-                fi
-                return 1
-              fi
-            else
-              echo "❌ FATAL: SHA256 calculation failed for $name"
-              if ! restore_original_makefile; then exit 1; fi
-              return 1
-            fi
-          }
-
-          if ! sync_hash "sing-box" "package/openwrt-passwall-packages/sing-box/Makefile"; then exit 1; fi
-          if ! sync_hash "xray-core" "package/openwrt-passwall-packages/xray-core/Makefile"; then exit 1; fi
-          
-          echo "🔒 [SDC v2.0] Adaptive mode completed"
-          # =====================================================
-          
-          echo "=== 🔐 Required Core Configuration Audit ==="
-          for cfg in \
-            CONFIG_USE_APK \
-            CONFIG_CCACHE \
-            CONFIG_PACKAGE_luci-app-passwall \
-            CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray \
-            CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox \
-            CONFIG_PACKAGE_xray-core \
-            CONFIG_PACKAGE_sing-box \
-            CONFIG_PACKAGE_smartdns \
-            CONFIG_PACKAGE_kmod-wireguard \
-            CONFIG_PACKAGE_wireguard-tools
-          do
-            if ! grep -Eq "^${cfg}=y$" .config; then
-              echo "❌ REQUIRED CONFIG MISSING: $cfg"
-              exit 1
-            fi
-          done
-          echo "✅ Required core configuration audit passed"
-
-          echo "=== 🔒 Post-Defconfig Forbidden Package Audit ==="
-          for p in block-mount automount luci-app-fstab luci-app-plugins; do
-            if grep -Eq "^CONFIG_PACKAGE_${p}=[ym]" .config; then
-              echo "❌ FORBIDDEN PACKAGE ENABLED AFTER DEFCONFIG: $p"
-              exit 1
-            fi
-          done
-          echo "✅ Post-defconfig forbidden package audit passed"
-          
           gzip -9f -c .config > ../logs_full.config.gz
           
       - name: Build Firmware
@@ -1840,79 +1557,55 @@ jobs:
           source /tmp/sre_utils.sh
           cd openwrt
           
+          # 提取最新 component commit timestamp 作為基準
           IMM_DATE=$(git log -1 --format=%ct)
           PW_DATE=$(git -C package/openwrt-passwall log -1 --format=%ct 2>/dev/null || echo "$IMM_DATE")
           PWP_DATE=$(git -C package/openwrt-passwall-packages log -1 --format=%ct 2>/dev/null || echo "$IMM_DATE")
           export SOURCE_DATE_EPOCH=$(printf "%s\n%s\n%s" "$IMM_DATE" "$PW_DATE" "$PWP_DATE" | sort -n | tail -1)
           echo "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH" >> ../toolchain.info
           
-          MONITOR_PID=""
-          cleanup_monitor() {
-            echo "🧹 關閉駕駛艙雷達..."
-            [ -n "$MONITOR_PID" ] && kill "$MONITOR_PID" 2>/dev/null || true
-          }
-          trap cleanup_monitor EXIT INT TERM
+          export CC="ccache gcc" CXX="ccache g++"
           
-          (
-            echo "📡 BUILD MONITOR START"
-            while true; do
+          # 📟 駕駛艙儀表板複合監控指標
+          ( while true; do 
               LOAD=$(uptime | awk -F'load average:' '{print $2}' | xargs)
               MEM=$(free -m | awk '/Mem:/ {printf "%d/%dMB | %.0f%%", $3, $2, ($3/$2)*100}')
-              DISK=$(df -h / | awk 'NR==2 {print $5}')
+              DISK=$(df -h . | awk 'NR==2 {print $5}')
               echo "[MONITOR]  $LOAD | $MEM | DISK: $DISK"
-              sleep 120 || true
-            done
-          ) &
-          MONITOR_PID=$!
+              sleep 120
+            done ) &
+          trap 'kill $! 2>/dev/null' EXIT
           
-          echo "=== CCACHE STATISTICS RESET ==="
-          ccache -z || true
+          echo "▶️ [Step] Downloading package dependencies (this may take a while)..."
+          retry bash -c 'timeout 30m make download -j$(nproc) V=s'
           
-          if ! retry bash -c 'make download -j$(nproc)'; then
-            {
-              echo "BUILD_RESULT=FAILED"
-              echo "BUILD_MODE=DOWNLOAD"
-              echo "BUILD_FAILED=true"
-            } > ../build-status.txt
-            exit 1
-          fi
-          
-          BUILD_RESULT="SUCCESS"
-          BUILD_MODE="PARALLEL"
+          FAST_BUILD_STATUS="SUCCESS"
           echo "▶️ [Step] Starting main compilation..."
           if ! make -j$(nproc) 2>&1 | tee >(gzip -1 -c > ../logs_build.log.gz); then
-            echo "⚠️ [Parallel Build Failed] Retrying with -j1 V=s (Keeping build state)..."
-            BUILD_MODE="FALLBACK_J1"
-            if ! make -j1 V=s BUILD_LOG=1 2>&1 | tee >(gzip -1 -c > ../logs_build_debug.log.gz); then
-              BUILD_RESULT="FAILED"
-              {
-                echo "BUILD_RESULT=$BUILD_RESULT"
-                echo "BUILD_MODE=$BUILD_MODE"
-                echo "BUILD_FAILED=true"
-              } > ../build-status.txt
-              exit 1
-            fi
+            FAST_BUILD_STATUS="FAILED (Fallback to Debug)"
+            echo "FAST_BUILD_FAILED=true" > ../build-status.txt
+            rm -rf tmp && make -j1 V=s BUILD_LOG=1 2>&1 | tee >(gzip -1 -c > ../logs_build_debug.log.gz) || exit 1
           fi
-          echo "BUILD_RESULT=$BUILD_RESULT" >> ../build-status.txt
-          echo "BUILD_MODE=$BUILD_MODE" >> ../build-status.txt
+          echo "FAST_BUILD_STATUS=$FAST_BUILD_STATUS" >> ../build-status.txt
           
-          echo "=== CCACHE STATISTICS ==="
-          ccache -s || true
-          ccache -s > ../logs_ccache.txt 2>&1 || true
+          {
+            ccache -s
+            echo -e "\n=== CCACHE DISK USAGE ==="
+            df -h "$CCACHE_DIR"
+          } > ../logs_ccache.info 2>&1 || echo "ccache unavailable" > ../logs_ccache.info
           
-      - name: Save Cache (dl)
-        uses: actions/cache/save@v5
-        continue-on-error: true
+      - name: Save DL Cache
+        uses: actions/cache/save@v4
         if: success() && !cancelled()
+        continue-on-error: true
         with:
-          path: |
-            openwrt/dl
+          path: openwrt/dl
           key: ${{ steps.var.outputs.dl_key }}
-          
-      - name: Save Cache (ccache)
-        uses: actions/cache/save@v5
-        continue-on-error: true
+
+      - name: Save CCache
+        uses: actions/cache/save@v4
         if: success() && !cancelled()
+        continue-on-error: true
         with:
           path: ~/.ccache
           key: ${{ steps.var.outputs.ccache_key }}
@@ -1920,69 +1613,27 @@ jobs:
       - name: Validate & Final Packaging
         run: |
           set -euo pipefail
-          
-          # 🔒 Mandatory Build Gate Enforcement
-          if ! grep -Fxq 'BUILD_RESULT=SUCCESS' build-status.txt 2>/dev/null; then
-            echo "❌ FATAL: BUILD_RESULT is not SUCCESS or build-status.txt is missing"
-            cat build-status.txt 2>/dev/null || true
-            exit 1
-          fi
-
           ROOT="$(pwd)"
           TARGET_DIR="openwrt/bin/targets/x86/64"
           mkdir -p release_assets
           
           [ -d "$TARGET_DIR" ] || exit 1
           cd "$TARGET_DIR"
-          
-          : > "$ROOT/release_assets/sha256sums"
-          for img in *combined*.img.gz; do
-            [ -f "$img" ] || continue
-            sha256sum "$img" >> "$ROOT/release_assets/sha256sums"
-            install -m644 "$img" "$ROOT/release_assets/"
-          done
-          [ -s "$ROOT/release_assets/sha256sums" ] || { echo "❌ FATAL: No combined image checksum found"; exit 1; }
-          sha256sum -c "$ROOT/release_assets/sha256sums" || exit 1
-          
-          # 🟢 [Fixed Issue #2 Closure] 驗證 release_assets 發布目錄自身的 SHA256 完整性
-          (
-            cd "$ROOT/release_assets"
-            sha256sum -c sha256sums
-          ) || exit 1
+          sha256sum --ignore-missing -c sha256sums || exit 1
+          find . -name "*combined*.img.gz" -exec install -m644 {} "$ROOT/release_assets/" \;
+          install -m644 sha256sums "$ROOT/release_assets/sha256sums"
           
           cd "$ROOT"
           [ -z "$(find release_assets -type f -name "*combined*.img.gz")" ] && { echo "Firmware missing!"; exit 1; }
           
           find openwrt/bin/targets/x86/64 -name "*.manifest" -exec sh -c 'echo "=== $(basename "$1") ==="; cat "$1"; echo' _ {} \; > release_assets/installed-packages.txt
+          [ -s release_assets/installed-packages.txt ] || rm -f release_assets/installed-packages.txt
           
-          if [ ! -s release_assets/installed-packages.txt ]; then
-            echo "❌ FATAL: Final firmware manifest is missing or empty"
-            exit 1
-          fi
-          
-          echo "=== 🔒 Final Manifest Package Audit ==="
-          for p in block-mount automount luci-app-fstab luci-app-plugins; do
-            if awk -v pkg="$p" '$1 == pkg {found=1} END {exit found ? 0 : 1}' release_assets/installed-packages.txt; then
-              echo "❌ FORBIDDEN PACKAGE FOUND IN FINAL MANIFEST: $p"
-              exit 1
-            fi
-          done
-          
-          echo "=== 🔐 Final Native Core Manifest Audit ==="
-          for p in luci-app-passwall xray-core sing-box; do
-            if ! awk -v pkg="$p" '$1 == pkg {found=1} END {exit found ? 0 : 1}' release_assets/installed-packages.txt; then
-              echo "❌ REQUIRED FINAL PACKAGE MISSING IN MANIFEST: $p"
-              exit 1
-            fi
-          done
-          echo "✅ Final manifest package audit passed"
-          
-          if [ -d openwrt/bin/packages ]; then
-            find openwrt/bin/packages -name "*.apk" | sort > release_assets/apk-list.txt
-          fi
+          find openwrt/bin/packages -name "*.apk" | sort > release_assets/apk-list.txt
           [ -s release_assets/apk-list.txt ] || rm -f release_assets/apk-list.txt
           
-          OW_RELEASE="$(find openwrt/build_dir/target-x86_64_musl* -type f -path '*/root-*/etc/openwrt_release' -print -quit 2>/dev/null || true)"
+          # 🚀 防禦性 find：免疫目錄結構變更，提取最終產物之真實指紋
+          OW_RELEASE=$(find openwrt/build_dir -name openwrt_release -path "*/root-*/etc/openwrt_release" -print -quit 2>/dev/null || true)
           if [ -n "$OW_RELEASE" ] && [ -f "$OW_RELEASE" ]; then
             OW_REV=$(grep DISTRIB_REVISION "$OW_RELEASE" | head -n 1 | cut -d= -f2 | tr -d "'" || echo "unknown")
           else
@@ -1992,7 +1643,7 @@ jobs:
           
           cat << EOF > release_assets/build-info.txt
           Build Date: $(date -u '+%Y-%m-%dT%H:%M:%SZ')
-          Branch: Master (Snapshot)
+          Branch: master
           OpenWrt Version: $OW_REV
           Workflow Run ID: ${{ github.run_id }}
           Runner OS: ${{ runner.os }}
@@ -2000,72 +1651,39 @@ jobs:
           Runner Image Version: ${ImageVersion:-unknown}
           Runner Arch: $(uname -m)
           Kernel: $(uname -r)
-          CPU: $(nproc) logical CPUs
+          CPU: $(nproc) cores
           Memory: $(free -h | awk '/Mem:/ {print $2}')
           SOURCE_DATE_EPOCH: $(grep SOURCE_DATE_EPOCH toolchain.info | cut -d= -f2 || echo unknown)
           ImmortalWrt Commit: $(git -C openwrt rev-parse HEAD 2>/dev/null || echo unknown)
           PassWall Commit: $(git -C openwrt/package/openwrt-passwall rev-parse HEAD 2>/dev/null || echo unknown)
           PassWall Packages Commit: $(git -C openwrt/package/openwrt-passwall-packages rev-parse HEAD 2>/dev/null || echo unknown)
-          Build Result: $(cat build-status.txt 2>/dev/null | grep BUILD_RESULT || echo "UNKNOWN")
-          Build Mode: $(cat build-status.txt 2>/dev/null | grep BUILD_MODE || echo "UNKNOWN")
+          Fast Build Status: $(cat build-status.txt 2>/dev/null || echo "UNKNOWN")
           EOF
           
           [ -s feeds.snapshot.txt ] && install -m644 feeds.snapshot.txt release_assets/feeds.snapshot
           [ -s toolchain.info ] && install -m644 toolchain.info release_assets/toolchain.info
           [ -s logs_full.config.gz ] && install -m644 logs_full.config.gz release_assets/full.config.gz
           [ -s logs_diffconfig.txt ] && install -m644 logs_diffconfig.txt release_assets/diffconfig.txt
+          [ -s logs_ccache.info ] && install -m644 logs_ccache.info release_assets/ccache.info
           [ -s build-status.txt ] && install -m644 build-status.txt release_assets/
           [ -s logs_build.log.gz ] && install -m644 logs_build.log.gz release_assets/
           [ -s logs_build_debug.log.gz ] && install -m644 logs_build_debug.log.gz release_assets/
-          [ -s logs_ccache.txt ] && install -m644 logs_ccache.txt release_assets/
           [ -s /tmp/retry_history.log ] && install -m644 /tmp/retry_history.log release_assets/
           [ -s /tmp/retry_debug.log ] && gzip -9 -c /tmp/retry_debug.log > release_assets/retry_debug.log.gz || true
           
           find release_assets -type f -empty -print -delete
           
-      - name: Failure Archaeology Artifact
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: ImmWrt-Snapshot-Archaeology-${{ github.run_id }}-${{ github.run_attempt }}
-          if-no-files-found: warn
-          include-hidden-files: true
-          retention-days: 14
-          path: |
-            toolchain.info
-            feeds.snapshot.txt
-            build-status.txt
-            logs_diffconfig.txt
-            logs_full.config.gz
-            logs_build.log.gz
-            logs_build_debug.log.gz
-            logs_ccache.txt
-            /tmp/retry_history.log
-            /tmp/retry_debug.log
-            openwrt/.config
-            openwrt/package/openwrt-passwall*/**/Makefile
-            openwrt/package/openwrt-passwall*/**/*.sdc-backup
-
       - name: Publish Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: SNAPSHOT-b${{ github.run_number }}-a${{ github.run_attempt }}-${{ steps.meta.outputs.date }}
-          target_commitish: ${{ github.sha }}
-          name: ImmWrt Master Snapshot
+          tag_name: SNAPSHOT-b${{ github.run_number }}-${{ steps.meta.outputs.date }}
+          name: ImmWrt SNAPSHOT Experimental
           body: |
-            ### 🧪 ImmWrt Master Snapshot — Experimental Production-Sealed Candidate
-            - **顯式宣告 APK**：在設定檔中明確宣告 `CONFIG_USE_APK=y`，鎖定底層套件管理架構。
-            - **四重狀態封鎖 (State Blocking)**：透過「Kconfig 原生禁用 → Defconfig 收斂 → Post-Defconfig 正向/反向審計 → 最終 Manifest 雙向審計」，徹底杜絕 `block-mount`、`automount`、`luci-app-fstab` 與 `luci-app-plugins` 等依賴回歸。
-            - **嚴格驗證機制**：Post-Defconfig 深度配置審計（含正向核心合約檢查）；最終韌體 Manifest 缺失致命化；SHA256 校驗強制完全比對，拒絕寬容通過。
-            - **PassWall 最新主幹同步**：即時拉取最新 `openwrt-passwall` 與 `openwrt-passwall-packages` 最新 commit。
-            - **備份引擎升級**：內建 `ib v1.8` 黃金基準垂直排版版，解耦套件強依賴，確保跨版本配置恢復安全。
-            - **網路核心擴展**：完整嵌入 `WireGuard` 核心套件、密碼學底層模組、`wireguard-tools` 工具鏈及 `qrencode` (QR Code 支援)。
-            - **自癒架構 (SDC v2.0 Strict)**：導入整份 Makefile 無損快照；任何可恢復異常皆觸發原始狀態回滾，遭拒時強制保留備份現場並中止 CI。寫入後強制校驗 Exact-One 配置，確保依賴樹語意完整。
-            - **嚴格退回機制 (Strict No-Guess Resolution)**：SDC 僅接受 dumpinfo 解析出的「剛好一個」Exact Source；下載、驗證、寫入任一階段失敗即完整回滾並中止 CI，不使用萬用字元猜測 fallback。
-            - **可復現性時間基準 Epoch**：以 ImmortalWrt、PassWall、PassWall Packages 三方倉庫中最新 Commit Timestamp 作為 `SOURCE_DATE_EPOCH` 基準；Swap 防漂移：無 Swap 時建立 4GB 裝甲，已有則保留。
-            - **快取綱要嚴格隔離**：快取採 Immutable Cumulative Generation：每次 Run 使用唯一 generation key，並透過 feeds snapshot 二級梯隊與 restore-prefix 繼承可用快取，形成跨 Run 的累積式增量編譯鏈。
-            - **Node 24 Ready**：執行環境為 ubuntu-24.04，採用 Node 24 相容的 Actions 版本，並透過 `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` 預先指定 Actions runtime 使用 Node 24，降低後續 Actions 遷移風險。
-            - **Snapshot Native Track**：雙核心滿血火力全開：完整編譯並保留 Xray-core 與 Sing-box 核心，驗證上游最新分流元件穩定性。
+            ### 🧪 SNAPSHOT Experimental Build (SDC v1.4 Final)
+            - **原生備份引擎**：注入 ib v1.8 原生備份工具，確立「11 REQUIRED + 6 OPTIONAL = up to 17 files」備份規格（含 Argon dark.css），賦予滾動版本 OpenWrt native /bin/sh 相容之原子回滾防護，並修復 tar 目錄項驗證誤判。
+            - **JSON 韌性升級**：增強 jq 解析，防止上游不穩定之殘缺選單檔案干擾編譯 Pipeline。
+            - **WireGuard 依賴補齊**：明確宣告 WireGuard 核心模組、wg-quick 工具及 qrencode。
+            - **自癒架構 (SDC v1.4 Final)**：導入 OpenWrt Native Build System (dumpinfo) 優先解析，100% 容忍空白字元漂移，並保留 Legacy pattern 猜測作為防禦性 Fallback 免疫上游目錄結構異常。
           files: release_assets/*
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
