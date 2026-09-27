@@ -299,11 +299,10 @@ jobs:
 
           OPTIONAL_FILES="
           /etc/config/argon
-          /usr/share/passwall/rules/direct_host
-          /usr/share/passwall/rules/direct_ip
-          /usr/share/passwall/rules/proxy_host
-          /usr/share/passwall/rules/proxy_ip
-          /www/luci-static/argon/css/dark.css
+          /etc/passwall/rules/direct_host
+          /etc/passwall/rules/direct_ip
+          /etc/passwall/rules/proxy_host
+          /etc/passwall/rules/proxy_ip
           "
           readonly OPTIONAL_FILES
 
@@ -360,11 +359,10 @@ jobs:
                   /etc/config/upnpd|\
                   /etc/crontabs/root|\
                   /etc/config/argon|\
-                  /usr/share/passwall/rules/direct_host|\
-                  /usr/share/passwall/rules/direct_ip|\
-                  /usr/share/passwall/rules/proxy_host|\
-                  /usr/share/passwall/rules/proxy_ip|\
-                  /www/luci-static/argon/css/dark.css)
+                  /etc/passwall/rules/direct_host|\
+                  /etc/passwall/rules/direct_ip|\
+                  /etc/passwall/rules/proxy_host|\
+                  /etc/passwall/rules/proxy_ip)
                       return 0
                       ;;
                   *)
@@ -753,7 +751,7 @@ jobs:
           "Missing archive file for manifest entry: $f" \
                           5
 
-              done < "$WORK/manifest.parsed"
+                  done < "$WORK/manifest.parsed"
           }
 
 
@@ -865,7 +863,7 @@ jobs:
 
                       MISSING)
 
-                      if [ -e "$f" ] && ! rm -f "$f"; then
+                          if [ -e "$f" ] && ! rm -f "$f"; then
 
                               printf \
           "CRITICAL: Failed to remove restored file %s\n" \
@@ -876,6 +874,7 @@ jobs:
                           ;;
 
                       *)
+
                           printf \
           "CRITICAL: Invalid safety state: %s %s\n" \
                               "$state" "$f" >&2
@@ -1395,7 +1394,7 @@ jobs:
               safe_rm "$WORK"
 
               mkdir -p "$WORK" || \
-                  fail \
+                  fail_verify \
           "Info workspace creation failed" \
                       5
 
