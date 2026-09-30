@@ -1581,6 +1581,15 @@ jobs:
 
           echo "✅ KK Firmware Identity:"
           grep '^DISTRIB_' "$BASE_RELEASE"
+
+          # ============================================================
+          # 🔒 Force base-files regeneration
+          # openwrt_release is part of base-files; explicitly clean its prior
+          # package state so the edited source template cannot be bypassed by
+          # a stale package stamp/cache. This does not change .config or any
+          # firmware package selection.
+          # ============================================================
+          make package/base-files/clean
           # ============================================================
           
           # 提取最新 component commit timestamp 作為基準
@@ -1655,7 +1664,7 @@ jobs:
           BUILD_STAMP="$(cat "$ROOT/build-stamp.txt")"
           FINAL_IMG="ImmortalWrt_SNAPSHOT_master_KK_${BUILD_STAMP}_x86-64-efi.img.gz"
 
-          SRC_IMG="$(find . -type f -name '*combined*.img.gz' -print -quit)"
+          SRC_IMG="$(find . -type f -name '*combined-efi.img.gz' -print -quit)"
           [ -n "$SRC_IMG" ] || {
             echo "❌ Firmware image not found"
             exit 1
@@ -1682,11 +1691,16 @@ jobs:
           [ -s release_assets/apk-list.txt ] || rm -f release_assets/apk-list.txt
           
           # 🚀 防禦性 find：免疫目錄結構變更，提取最終產物之真實指紋
-          # 🚀 防禦性 find：免疫目錄結構變更，提取最終產物之真實指紋
-          OW_RELEASE=$(find openwrt/build_dir \
-            -name openwrt_release \
-            -path "*/root-*/etc/openwrt_release" \
-            -print -quit 2>/dev/null || true)
+          # ============================================================
+          # 🔒 Final firmware identity audit
+          # Verify both the generated rootfs tree and the ACTUAL EFI image.
+          # The latter prevents a stale/wrong image variant from being renamed
+          # as x86-64-efi and escaping validation.
+          # ============================================================
+          OW_RELEASE="$(find openwrt/build_dir/target-x86_64_musl \
+            -path "*/etc/openwrt_release" \
+            -type f \
+            -print -quit 2>/dev/null || true)"
 
           [ -n "$OW_RELEASE" ] && [ -f "$OW_RELEASE" ] || {
             echo "❌ FATAL: final openwrt_release not found"
@@ -1696,7 +1710,7 @@ jobs:
           EXPECTED_DESCRIPTION="ImmortalWrt ${BUILD_STAMP}_SNAPSHOT_master_KK / LuCI openwrt-master branch"
 
           grep -Fx "DISTRIB_DESCRIPTION='${EXPECTED_DESCRIPTION}'" "$OW_RELEASE" || {
-            echo "❌ FATAL: Final firmware DISTRIB_DESCRIPTION mismatch"
+            echo "❌ FATAL: build rootfs identity mismatch"
             echo "Expected:"
             echo "DISTRIB_DESCRIPTION='${EXPECTED_DESCRIPTION}'"
             echo "Actual:"
@@ -1704,7 +1718,59 @@ jobs:
             exit 1
           }
 
-          echo "✅ Final firmware identity audit passed"
+          # Inspect the actual EFI image, not only build_dir.
+          IMG_TMP="$(mktemp --suffix=.img)"
+          LOOPDEV=""
+          MOUNT_DIR=""
+          cleanup_image_audit() {
+            set +e
+            [ -n "$MOUNT_DIR" ] && mountpoint -q "$MOUNT_DIR" && sudo umount "$MOUNT_DIR"
+            [ -n "$LOOPDEV" ] && sudo losetup -d "$LOOPDEV"
+            [ -n "$MOUNT_DIR" ] && rmdir "$MOUNT_DIR" 2>/dev/null || true
+            rm -f "$IMG_TMP"
+          }
+          trap cleanup_image_audit EXIT
+
+          gzip -t "release_assets/$FINAL_IMG"
+          gzip -dc "release_assets/$FINAL_IMG" > "$IMG_TMP"
+          LOOPDEV="$(sudo losetup --find --show --partscan "$IMG_TMP")"
+          [ -n "$LOOPDEV" ] || {
+            echo "❌ FATAL: unable to attach EFI image"
+            exit 1
+          }
+
+          MOUNT_DIR="$(mktemp -d)"
+          IMAGE_IDENTITY_OK=0
+          for PART in "${LOOPDEV}"p*; do
+            [ -b "$PART" ] || continue
+            FSTYPE="$(sudo blkid -o value -s TYPE "$PART" 2>/dev/null || true)"
+            case "$FSTYPE" in
+              squashfs|ext2|ext3|ext4|f2fs|btrfs)
+                if sudo mount -o ro "$PART" "$MOUNT_DIR" 2>/dev/null; then
+                  if [ -f "$MOUNT_DIR/etc/openwrt_release" ]; then
+                    grep -Fx "DISTRIB_DESCRIPTION='${EXPECTED_DESCRIPTION}'" "$MOUNT_DIR/etc/openwrt_release" || {
+                      echo "❌ FATAL: ACTUAL EFI image identity mismatch"
+                      grep '^DISTRIB_' "$MOUNT_DIR/etc/openwrt_release" || true
+                      exit 1
+                    }
+                    IMAGE_IDENTITY_OK=1
+                    sudo umount "$PART" 2>/dev/null || true
+                    break
+                  fi
+                  sudo umount "$PART" 2>/dev/null || true
+                fi
+                ;;
+            esac
+          done
+
+          [ "$IMAGE_IDENTITY_OK" -eq 1 ] || {
+            echo "❌ FATAL: /etc/openwrt_release not found inside actual EFI image"
+            exit 1
+          }
+          echo "✅ Final firmware identity audit passed (rootfs + EFI image)"
+          trap - EXIT
+          cleanup_image_audit
+
 
           OW_REV=$(grep DISTRIB_REVISION "$OW_RELEASE" | head -n 1 | cut -d= -f2 | tr -d "'" || echo "unknown")
           [ -z "$OW_REV" ] && OW_REV="unknown"
