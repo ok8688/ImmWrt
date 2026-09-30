@@ -1556,43 +1556,65 @@ jobs:
           cd openwrt
           
           # ============================================================
-          # 🔒 KK Firmware Identity
-          # 單一 BUILD_STAMP：同時用於 firmware description 與最終 IMG 檔名
+          # 🔒 KK Firmware Identity — FINAL ROOTFS OVERLAY
+          # 先讓 OpenWrt 原生 base-files 展開 %D/%V/%C/%R/%S/%A，
+          # 再只修改 DISTRIB_DESCRIPTION，最後以 TOPDIR/files overlay
+          # 覆蓋到真正的 rootfs/image。這不改 .config 或套件選擇。
           # ============================================================
           BUILD_STAMP="$(date -u '+%y%m%d%H%M')"
           CUSTOM_DESCRIPTION="ImmortalWrt ${BUILD_STAMP}_SNAPSHOT_master_KK / LuCI openwrt-master branch"
-
           echo "$BUILD_STAMP" > ../build-stamp.txt
 
-          BASE_RELEASE="package/base-files/files/etc/openwrt_release"
-          [ -f "$BASE_RELEASE" ] || {
-            echo "❌ FATAL: $BASE_RELEASE not found"
+          rm -f files/etc/openwrt_release
+
+          # 強制重新產生 base-files package staging tree。
+          # 官方 package system 的 IDIR 位於 build_dir/*/base-files*/ipkg-*/base-files，
+          # 即使 CONFIG_USE_APK=y 也仍由同一 Package/install 產生。
+          make package/base-files/clean
+          make package/base-files/compile V=s
+
+          GENERATED_RELEASE="$(find build_dir -type f \
+            -path '*/.pkgdir/base-files/etc/openwrt_release' \
+            -print -quit 2>/dev/null || true)"
+
+          if [ -z "$GENERATED_RELEASE" ]; then
+            GENERATED_RELEASE="$(find build_dir -type f \
+              -path '*/ipkg-*/base-files/etc/openwrt_release' \
+              -print -quit 2>/dev/null || true)"
+          fi
+
+          [ -n "$GENERATED_RELEASE" ] && [ -f "$GENERATED_RELEASE" ] || {
+            echo "❌ FATAL: generated base-files/etc/openwrt_release not found"
+            find build_dir -type f -name openwrt_release -print 2>/dev/null || true
             exit 1
           }
 
+          echo "=== OFFICIAL EXPANDED RELEASE ==="
+          grep '^DISTRIB_' "$GENERATED_RELEASE"
+
+          mkdir -p files/etc
+          cp -f "$GENERATED_RELEASE" files/etc/openwrt_release
           sed -i \
             "s|^DISTRIB_DESCRIPTION=.*|DISTRIB_DESCRIPTION='${CUSTOM_DESCRIPTION}'|" \
-            "$BASE_RELEASE"
+            files/etc/openwrt_release
 
-          grep -Fx "DISTRIB_DESCRIPTION='${CUSTOM_DESCRIPTION}'" "$BASE_RELEASE" || {
-            echo "❌ FATAL: Failed to inject DISTRIB_DESCRIPTION"
+          grep -Fx "DISTRIB_DESCRIPTION='${CUSTOM_DESCRIPTION}'" files/etc/openwrt_release || {
+            echo "❌ FATAL: KK description injection failed"
             exit 1
           }
 
-          echo "✅ KK Firmware Identity:"
-          grep '^DISTRIB_' "$BASE_RELEASE"
+          if grep -Eq '%[A-Za-z]' files/etc/openwrt_release; then
+            echo "❌ FATAL: release overlay still contains VERSION placeholders"
+            cat files/etc/openwrt_release
+            exit 1
+          fi
 
-          # ============================================================
-          # 🔒 Force base-files regeneration
-          # openwrt_release is part of base-files; explicitly clean its prior
-          # package state so the edited source template cannot be bypassed by
-          # a stale package stamp/cache. This does not change .config or any
-          # firmware package selection.
-          # ============================================================
-          make package/base-files/clean
-          # ============================================================
+          echo "=== KK FINAL RELEASE OVERLAY ==="
+          grep '^DISTRIB_' files/etc/openwrt_release
           
-          # 提取最新 component commit timestamp 作為基準
+          # ============================================================
+          # 原 build pipeline：SOURCE_DATE_EPOCH / download / compile
+          # ============================================================
           IMM_DATE=$(git log -1 --format=%ct)
           PW_DATE=$(git -C package/openwrt-passwall log -1 --format=%ct 2>/dev/null || echo "$IMM_DATE")
           PWP_DATE=$(git -C package/openwrt-passwall-packages log -1 --format=%ct 2>/dev/null || echo "$IMM_DATE")
@@ -1601,7 +1623,6 @@ jobs:
           
           export CC="ccache gcc" CXX="ccache g++"
           
-          # 📟 駕駛艙儀表板複合監控指標
           ( while true; do 
               LOAD=$(uptime | awk -F'load average:' '{print $2}' | xargs)
               MEM=$(free -m | awk '/Mem:/ {printf "%d/%dMB | %.0f%%", $3, $2, ($3/$2)*100}')
@@ -1672,6 +1693,35 @@ jobs:
 
           install -m644 "$SRC_IMG" "$ROOT/release_assets/$FINAL_IMG"
 
+          # ============================================================
+          # 📏 Image Size / Variant Audit
+          # 73.3 MB vs 舊 62.2 MB 不能由 description 造成；這裡把
+          # EFI 候選、壓縮/解壓後尺寸、rootfs tree、manifest 行數一次留下。
+          # ============================================================
+          {
+            echo "=== EFI IMAGE CANDIDATES ==="
+            find . -type f -name '*combined-efi.img.gz' -printf '%p %s bytes\n' | sort
+            echo
+            echo "=== SELECTED EFI IMAGE ==="
+            stat -c '%n %s bytes' "$SRC_IMG"
+            echo
+            echo "=== UNCOMPRESSED IMAGE SIZE ==="
+            TMP_UNPACK="$ROOT/.kk-size-audit.img"
+            rm -f "$TMP_UNPACK"
+            gzip -dc "$SRC_IMG" > "$TMP_UNPACK"
+            stat -c '%n %s bytes' "$TMP_UNPACK"
+            rm -f "$TMP_UNPACK"
+            echo
+            echo "=== ROOTFS BUILD TREES ==="
+            find "$ROOT/openwrt/build_dir" -maxdepth 5 -type d \
+              \( -name 'root-*' -o -name 'root' \) -print 2>/dev/null | sort | while read -r d; do
+              du -sh "$d" 2>/dev/null || true
+            done
+            echo
+            echo "=== FINAL MANIFESTS ==="
+            find "$ROOT/openwrt/bin/targets/x86/64" -maxdepth 1 -name '*.manifest' -print -exec wc -l {} \;
+          } > "$ROOT/release_assets/image-size-audit.txt"
+
           (
             cd "$ROOT/release_assets"
             sha256sum "$FINAL_IMG" > sha256sums
@@ -1697,9 +1747,9 @@ jobs:
           # The latter prevents a stale/wrong image variant from being renamed
           # as x86-64-efi and escaping validation.
           # ============================================================
-          OW_RELEASE="$(find openwrt/build_dir/target-x86_64_musl \
-            -path "*/etc/openwrt_release" \
+          OW_RELEASE="$(find openwrt/build_dir/target-x86_64_musl* \
             -type f \
+            -path '*/root-*/etc/openwrt_release' \
             -print -quit 2>/dev/null || true)"
 
           [ -n "$OW_RELEASE" ] && [ -f "$OW_RELEASE" ] || {
@@ -1708,6 +1758,15 @@ jobs:
           }
 
           EXPECTED_DESCRIPTION="ImmortalWrt ${BUILD_STAMP}_SNAPSHOT_master_KK / LuCI openwrt-master branch"
+
+          cmp -s "$OW_RELEASE" openwrt/files/etc/openwrt_release || {
+            echo "❌ FATAL: final build rootfs release differs from KK overlay"
+            echo "--- overlay ---"
+            cat openwrt/files/etc/openwrt_release
+            echo "--- final rootfs ---"
+            cat "$OW_RELEASE"
+            exit 1
+          }
 
           grep -Fx "DISTRIB_DESCRIPTION='${EXPECTED_DESCRIPTION}'" "$OW_RELEASE" || {
             echo "❌ FATAL: build rootfs identity mismatch"
@@ -1823,4 +1882,3 @@ jobs:
           files: release_assets/*
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          
