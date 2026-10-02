@@ -1456,8 +1456,8 @@ jobs:
       - name: Generate Cache Variables
         id: var
         run: |
-          echo "dl_key=dl-snapshot-${{ env.CACHE_GEN }}-${{ hashFiles('feeds.snapshot.txt') }}" >> $GITHUB_OUTPUT
-          echo "ccache_key=ccache-snapshot-${{ env.CACHE_GEN }}-${{ hashFiles('feeds.snapshot.txt') }}" >> $GITHUB_OUTPUT
+          echo "dl_key=dl-snapshot-${{ hashFiles('feeds.snapshot.txt') }}" >> $GITHUB_OUTPUT
+          echo "ccache_key=ccache-snapshot-${{ hashFiles('feeds.snapshot.txt') }}" >> $GITHUB_OUTPUT
 
       - name: Restore DL Cache
         uses: actions/cache/restore@v4
@@ -1773,3 +1773,4 @@ jobs:
 # 10. [Block-Mount Root Cause Fix] 精準切斷 x86 automount 與 DEFAULT_PACKAGES.tweak 的 block-mount 直接注入，不改動 ext4/squashfs image 格式。
 # 11. [Full TLS] 保留 Xray + Sing-box 完整編譯能力；加入正向 Manifest 驗證。
 # =====================================================================
+
