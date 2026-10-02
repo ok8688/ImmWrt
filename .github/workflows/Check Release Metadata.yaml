@@ -1,0 +1,20 @@
+name: Check Release Metadata
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-26.04
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --repo ok8688/ImmWrt --limit 20 \
+            --json tagName,name,isLatest,isDraft,isPrerelease,createdAt,publishedAt \
+            --jq '.[] | [.tagName,.name,.isLatest,.isDraft,.isPrerelease,.createdAt,.publishedAt] | @tsv'
