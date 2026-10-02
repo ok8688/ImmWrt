@@ -1,4 +1,4 @@
-name: Build ImmWrt Master Snapshot refined
+name: Build ImmWrt Master Snapshot FINAL
 
 on:
   workflow_dispatch:
@@ -1550,6 +1550,12 @@ jobs:
           CONFIG_PACKAGE_luci-app-fstab=n
           CONFIG_PACKAGE_luci-app-plugins=n
           EOF
+          echo "=== 🇨🇳 Chinese LuCI Defconfig Audit ==="
+          for cfg in CONFIG_PACKAGE_luci CONFIG_LUCI_LANG_zh_Hans CONFIG_PACKAGE_luci-i18n-base-zh-cn; do
+            grep -Eq "^${cfg}=y$" .config || { echo "❌ REQUIRED CHINESE LUCI CONFIG MISSING: $cfg"; exit 1; }
+          done
+          echo "✅ Chinese LuCI defconfig audit passed"
+
           echo "=== 🔒 Forbidden Package Defconfig Audit ==="
           for p in block-mount automount luci-app-fstab luci-app-plugins; do
             if grep -Eq "^CONFIG_PACKAGE_${p}=[ym]" .config; then
