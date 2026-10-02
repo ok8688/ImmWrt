@@ -1739,7 +1739,7 @@ jobs:
           find release_assets -type f -empty -print -delete
           
       - name: Publish Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: SNAPSHOT-b${{ github.run_number }}-${{ steps.meta.outputs.date }}
           name: ImmWrt SNAPSHOT Experimental
