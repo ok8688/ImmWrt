@@ -19,7 +19,6 @@ env:
   CCACHE_MAXSIZE: 8G
   CCACHE_BASEDIR: ${{ github.workspace }}
   CCACHE_SLOPPINESS: time_macros,file_macro
-  CACHE_GEN: v2
   IMMORTALWRT_BRANCH: master
 
 jobs:
@@ -1743,6 +1742,7 @@ jobs:
         with:
           tag_name: SNAPSHOT-b${{ github.run_number }}-${{ steps.meta.outputs.date }}
           name: ImmWrt SNAPSHOT Experimental
+          make_latest: true
           body: |
             ### 🧪 SNAPSHOT Experimental Build (SDC v1.4 Final)
             - **原生備份引擎**：注入 ib v1.8 原生備份工具，確立「11 REQUIRED + 6 OPTIONAL = up to 17 files」備份規格（含 Argon dark.css），賦予滾動版本 OpenWrt native /bin/sh 相容之原子回滾防護，並修復 tar 目錄項驗證誤判。
