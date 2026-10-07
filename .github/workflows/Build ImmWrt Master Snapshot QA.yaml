@@ -1571,6 +1571,18 @@ jobs:
           echo "=== 🔬 WireGuard Package Selection Audit ==="
           grep -iE "CONFIG_PACKAGE_(kmod-wireguard|wireguard-tools|luci-proto-wireguard|qrencode)" .config || true
           make defconfig
+          
+          echo "=== 🔎 QEMU-GA CONFIG DIAGNOSTIC ==="
+          
+          grep -E '^(CONFIG_PACKAGE_qemu-ga|# CONFIG_PACKAGE_qemu-ga)' .config || true
+          
+          echo "--- qemu-ga package definition ---"
+          grep -R -n -E 'config PACKAGE_qemu-ga|CONFIG_PACKAGE_qemu-ga|qemu-ga' \
+            package/feeds package 2>/dev/null | head -100 || true
+            
+          echo "--- qemu-ga dependencies ---"
+          grep -R -n -A20 -B5 'PACKAGE_qemu-ga' \
+            package/feeds package 2>/dev/null | head -150 || true
 
           echo "=== 🔒 Post-Defconfig Forbidden Package Audit ==="
           for p in block-mount automount luci-app-fstab luci-app-plugins; do
