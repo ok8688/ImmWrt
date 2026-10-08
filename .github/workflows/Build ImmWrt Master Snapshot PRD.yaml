@@ -1730,11 +1730,21 @@ jobs:
           echo "=== 🔧 Final QEMU Guest Agent Payload Audit ==="
           QEMU_APK=$(find openwrt/bin/packages -type f -name 'qemu-ga*.apk' -print -quit 2>/dev/null || true)
           [ -n "$QEMU_APK" ] || { echo "❌ qemu-ga APK missing from final package output"; exit 1; }
-          tar -tf "$QEMU_APK" 2>/dev/null | grep -Eq '(^|/)usr/bin/qemu-ga$' || {
-            echo "❌ qemu-ga binary missing from final qemu-ga APK"
+          APK_TOOL="openwrt/staging_dir/host/bin/apk"
+          [ -x "$APK_TOOL" ] || { echo "❌ OpenWrt host apk tool missing"; exit 1; }
+          QEMU_AUDIT_DIR=$(mktemp -d)
+          trap 'rm -rf "$QEMU_AUDIT_DIR"' EXIT
+          if ! "$APK_TOOL" extract --allow-untrusted --destination "$QEMU_AUDIT_DIR" "$QEMU_APK" >/dev/null 2>&1; then
+            echo "❌ failed to extract qemu-ga APK for payload audit"
+            exit 1
+          fi
+          [ -x "$QEMU_AUDIT_DIR/usr/bin/qemu-ga" ] || {
+            echo "❌ /usr/bin/qemu-ga missing from final qemu-ga APK payload"
+            echo "--- extracted qemu-ga payload ---"
+            find "$QEMU_AUDIT_DIR" -maxdepth 4 -type f -o -type l | sort | head -100 || true
             exit 1
           }
-          echo "✅ Final qemu-ga payload audit passed"
+          echo "✅ Final qemu-ga payload audit passed: /usr/bin/qemu-ga"
           echo "=== 🔒 Full Snapshot Positive Capability Audit ==="
           for p in xray-core sing-box luci-app-passwall; do
             if ! grep -Eq "(^|[[:space:]])${p}([[:space:]]|$)" release_assets/installed-packages.txt; then
