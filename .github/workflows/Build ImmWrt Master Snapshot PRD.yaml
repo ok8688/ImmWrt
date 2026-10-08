@@ -1523,7 +1523,7 @@ jobs:
           CONFIG_PACKAGE_qemu-ga=y
           CONFIG_PACKAGE_input-support=y
           CONFIG_PACKAGE_irqbalance=y
-                    CONFIG_PACKAGE_kmod-wireguard=y
+          CONFIG_PACKAGE_kmod-wireguard=y
           CONFIG_PACKAGE_wireguard-tools=y
           CONFIG_PACKAGE_luci-proto-wireguard=y
           CONFIG_PACKAGE_qrencode=y
