@@ -1,4 +1,4 @@
-name: Build ImmWrt Master Snapshot PRD
+name: Build ImmWrt Master Snapshot
 
 on:
   workflow_dispatch:
