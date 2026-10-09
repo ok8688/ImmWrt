@@ -1,5 +1,5 @@
 # ==== VARIANT CONFIG START ====
-name: Build ImmWrt Master Snapshot node24
+name: Build ImmWrt Master Snapshot
 env:
   IMMORTALWRT_VERSION: master
   INCLUDE_XRAY: "true"
