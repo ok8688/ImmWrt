@@ -1,5 +1,5 @@
 # ==== VARIANT CONFIG START ====
-name: Build ImmWrt Master Snapshot
+name: Build ImmWrt Master Snapshot M
 env:
   IMMORTALWRT_VERSION: master
   INCLUDE_XRAY: "true"
@@ -9,6 +9,18 @@ env:
   RELEASE_HEADING: "🧪 SNAPSHOT Experimental Build (SDC v1.4 Final)"
   BRANCH_LABEL: master
 # ==== VARIANT CONFIG END ====
+
+on:
+  workflow_dispatch:
+#  schedule:
+#    - cron: '26 14 * * 0,2,4,6' # UTC 14:26 = HKT 22:26 (每週日、二、四、六)
+
+concurrency:
+  group: immwrt-build
+  cancel-in-progress: false
+
+permissions:
+  contents: write
 
 jobs:
   build:
