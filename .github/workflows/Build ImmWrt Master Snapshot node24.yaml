@@ -223,7 +223,6 @@ jobs:
           sync_hash () {
             local name="$1"
             local makefile="$2"
-            local pattern="$3"
             
             if [ ! -f "$makefile" ]; then
               echo "⚠️ $name: Makefile missing, skip"
@@ -244,25 +243,32 @@ jobs:
               sed -i -E 's/^[[:space:]]*PKG_MIRROR_HASH[[:space:]]*(:=|\?=|=).*/PKG_MIRROR_HASH:=skip/' "$makefile"
             fi
             
-            # 2. 讓 OpenWrt build system 自己解析 package metadata
-            local pkg_source=""
-            pkg_source="$(
-              make -s "package/${name}/dumpinfo" 2>/dev/null |
-                sed -n 's/^Source: //p' |
-                head -n 1
-            )" || true
-            
-            pkg_source="$(
-              printf '%s' "$pkg_source" |
-                sed 's/\r$//' |
-                sed 's/^[[:space:]]*//' |
-                sed 's/[[:space:]]*$//'
-            )"
+            # 2. v7 (2026-10-09): 從 Makefile 直接解析預期檔名。
+            #    不再依賴 make dumpinfo——SDC 在 defconfig 之前執行，
+            #    dumpinfo 可能失效導致 pkg_source 為空，進而觸發 pattern 誤殺。
+            local pkg_source="" pkg_name="" pkg_version=""
+            pkg_name="$(grep -E '^[[:space:]]*PKG_NAME[[:space:]]*(:=|\\?=|=)' "$makefile" | head -n 1 | sed -E 's/^[^=]*=[[:space:]]*//; s/[[:space:]]*$//')"
+            pkg_version="$(grep -E '^[[:space:]]*PKG_VERSION[[:space:]]*(:=|\\?=|=)' "$makefile" | head -n 1 | sed -E 's/^[^=]*=[[:space:]]*//; s/[[:space:]]*$//')"
+            pkg_source="$(grep -E '^[[:space:]]*PKG_SOURCE[[:space:]]*(:=|\\?=|=)' "$makefile" | head -n 1 | sed -E 's/^[^=]*=[[:space:]]*//; s/[[:space:]]*$//')"
+            # 展開 $(PKG_NAME) / $(PKG_VERSION)
+            if [ -n "$pkg_name" ]; then
+              pkg_source="$(printf '%s' "$pkg_source" | sed "s|\$(PKG_NAME)|$pkg_name|g")"
+            fi
+            if [ -n "$pkg_version" ]; then
+              pkg_source="$(printf '%s' "$pkg_source" | sed "s|\$(PKG_VERSION)|$pkg_version|g")"
+            fi
+            # 清理 CR 與空白；若仍有未展開變數則視為未知
+            pkg_source="$(printf '%s' "$pkg_source" | sed 's/\r$//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')"
+            case "$pkg_source" in
+              *'$('*) pkg_source="" ;;
+            esac
             
             if [ -n "$pkg_source" ]; then
               pkg_source="$(basename -- "$pkg_source")"
               echo "🧹 [SDC v1.4] Purging stale dl cache for exact source: $pkg_source"
               rm -f "dl/$pkg_source"
+            else
+              echo "⚠️ $name: 無法從 Makefile 解析 PKG_SOURCE，跳過精準清理"
             fi
             
             # 3. 觸發實際下載 (強制從上游抓取乾淨 Artifact，並保留錯誤可觀測性)
@@ -282,25 +288,11 @@ jobs:
               fi
             fi
             
-            # 5. Legacy / Drift Fallback
-            #    2026-10-09 修復：pkg_source 已知但檔案缺失時，禁止用 pattern 兜底。
-            #    否則會撿到 dl cache 裡的舊版 tarball，把錯誤 hash 寫進 Makefile，
-            #    造成「版本是新版、hash 是舊版」的必死組合。此時保留 PKG_HASH:=skip，
-            #    讓 build 階段重新下載不驗證。
+            # 5. v7 (2026-10-09): pattern 兜底已徹底移除。
+            #    它曾在版本漂移時撿到舊版 tarball 並把錯誤 hash 寫入 Makefile。
+            #    預期檔案缺失時保留 PKG_HASH:=skip，讓 build 階段重新下載不驗證。
             if [ -z "$FILE" ] || [ ! -f "$FILE" ]; then
-              if [ -n "$pkg_source" ]; then
-                echo "⚠️ $name: expected artifact dl/$pkg_source missing after download; keeping 'skip' (拒絕用舊版 tarball 冒充)"
-              else
-                FILE="$(
-                  find dl -maxdepth 1 -type f \
-                    \( -name "${pattern}*.tar.gz" \
-                    -o -name "${pattern}*.tar.xz" \
-                    -o -name "${pattern}*.zip" \) \
-                    -print 2>/dev/null |
-                    sort |
-                    head -n 1
-                )"
-              fi
+              echo "⚠️ $name: expected artifact missing, keeping 'skip' (拒絕用舊版 tarball 冒充)"
             fi
             
             # 6. SHA256 Self-Healing
@@ -1604,9 +1596,9 @@ jobs:
           cd openwrt
           echo "▶️ [Step] Running SDC v1.4 AFTER DL cache restore..."
           source /tmp/sdc.sh
-          sync_hash "sing-box" "package/openwrt-passwall-packages/sing-box/Makefile" "sing-box-"
+          sync_hash "sing-box" "package/openwrt-passwall-packages/sing-box/Makefile"
           if [ "${INCLUDE_XRAY}" = "true" ]; then
-          sync_hash "xray-core" "package/openwrt-passwall-packages/xray-core/Makefile" "Xray-core-"
+          sync_hash "xray-core" "package/openwrt-passwall-packages/xray-core/Makefile"
           fi
           set -e
           echo "🔒 [SDC v1.4] Adaptive mode completed after cache restore"
@@ -1842,21 +1834,53 @@ jobs:
           
           FAST_BUILD_STATUS="SUCCESS"
           echo "▶️ [Step] Starting main compilation..."
-          if ! make -j$(nproc) 2>&1 | tee >(gzip -1 -c > ../logs_build.log.gz); then
-            # 2026-10-09: 下載類失敗（hash 不符 / 鏡像 404）重跑 make -j1 V=s 全量 verbose
-            # 只是刷屏（數萬行）且必定在同一個下載點再死一次，直接報錯不 fallback
-            if gzip -dc ../logs_build.log.gz 2>/dev/null | grep -qE "No more mirrors to try|Hash of the downloaded file does not match|Download failed"; then
-              echo "❌ 下載階段失敗（非編譯錯誤），跳過 verbose fallback，直接結束"
+          # v6 (2026-10-09): 明文 tee（消除 gzip 管線競態，失敗分類 grep 可靠），結束後再壓縮
+          if ! make -j$(nproc) 2>&1 | tee ../logs_build.log; then
+            # --- 失敗分類 1：tarball 下載類（hash 不符 / 鏡像 404）→ 直接結束，不刷屏 ---
+            if grep -qE "No more mirrors to try|Hash of the downloaded file does not match" ../logs_build.log; then
+              echo "❌ 下載階段失敗（非編譯錯誤），跳過 fallback，直接結束"
               echo "FAST_BUILD_FAILED=true" > ../build-status.txt
               echo "FAST_BUILD_STATUS=FAILED (Download)" >> ../build-status.txt
+              gzip -1 -c ../logs_build.log > ../logs_build.log.gz; rm -f ../logs_build.log
               exit 1
             fi
-            FAST_BUILD_STATUS="FAILED (Fallback to Debug)"
-            echo "FAST_BUILD_FAILED=true" > ../build-status.txt
-            rm -rf tmp build_dir/hostpkg staging_dir/hostpkg
-            make -j1 V=s 2>&1 | tee >(gzip -1 -c > ../logs_build_debug.log.gz) || exit 1
+            # --- 失敗分類 2：編譯類 → 只對失敗的 package 做 verbose（有界輸出，不再全量 world） ---
+            FAILED_PKG=$(grep -m1 -oE "ERROR: package/[^ ]+ failed to build" ../logs_build.log | sed -E 's/^ERROR: //; s/ failed to build$//' || true)
+            if [ -n "$FAILED_PKG" ]; then
+              echo "🎯 失敗 package: $FAILED_PKG，單獨 verbose 重編定位（輸出有界）..."
+              if make "$FAILED_PKG/compile" -j1 V=s > ../logs_pkg_debug.log 2>&1; then
+                echo "✅ $FAILED_PKG 單編通過（疑似並行抖動），恢復 world 繼續..."
+                if make -j$(nproc) 2>&1 | tail -n 40; then
+                  FAST_BUILD_STATUS="SUCCESS (Recovered)"
+                  echo "✅ world 恢復成功"
+                else
+                  echo "❌ world 恢復失敗，最後 60 行："
+                  tail -n 60 ../logs_build.log
+                  gzip -1 -c ../logs_build.log > ../logs_build.log.gz; rm -f ../logs_build.log
+                  echo "FAST_BUILD_FAILED=true" > ../build-status.txt
+                  exit 1
+                fi
+              else
+                echo "❌ $FAILED_PKG 單編仍失敗，關鍵錯誤："
+                echo "===================="
+                grep -a -B2 -A10 -iE "error:" ../logs_pkg_debug.log | tail -n 60 || tail -n 60 ../logs_pkg_debug.log
+                echo "===================="
+                gzip -1 -c ../logs_build.log > ../logs_build.log.gz; rm -f ../logs_build.log
+                gzip -1 -c ../logs_pkg_debug.log > ../logs_pkg_debug.log.gz; rm -f ../logs_pkg_debug.log
+                echo "FAST_BUILD_FAILED=true" > ../build-status.txt
+                echo "FAST_BUILD_STATUS=FAILED (Compile: $FAILED_PKG)" >> ../build-status.txt
+                exit 1
+              fi
+            else
+              echo "⚠️ 無法定位失敗 package，顯示最後 80 行："
+              tail -n 80 ../logs_build.log
+              gzip -1 -c ../logs_build.log > ../logs_build.log.gz; rm -f ../logs_build.log
+              echo "FAST_BUILD_FAILED=true" > ../build-status.txt
+              exit 1
+            fi
           fi
           echo "FAST_BUILD_STATUS=$FAST_BUILD_STATUS" >> ../build-status.txt
+          gzip -1 -c ../logs_build.log > ../logs_build.log.gz; rm -f ../logs_build.log
 
           {
             ccache -s
@@ -2000,7 +2024,7 @@ jobs:
           [ -s logs_ccache.info ] && install -m644 logs_ccache.info release_assets/ccache.info
           [ -s build-status.txt ] && install -m644 build-status.txt release_assets/
           [ -s logs_build.log.gz ] && install -m644 logs_build.log.gz release_assets/
-          [ -s logs_build_debug.log.gz ] && install -m644 logs_build_debug.log.gz release_assets/
+          [ -s logs_pkg_debug.log.gz ] && install -m644 logs_pkg_debug.log.gz release_assets/
           [ -s /tmp/retry_history.log ] && install -m644 /tmp/retry_history.log release_assets/
           [ -s /tmp/retry_debug.log ] && gzip -9 -c /tmp/retry_debug.log > release_assets/retry_debug.log.gz || true
           
