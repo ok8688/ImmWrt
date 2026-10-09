@@ -283,16 +283,24 @@ jobs:
             fi
             
             # 5. Legacy / Drift Fallback
+            #    2026-10-09 修復：pkg_source 已知但檔案缺失時，禁止用 pattern 兜底。
+            #    否則會撿到 dl cache 裡的舊版 tarball，把錯誤 hash 寫進 Makefile，
+            #    造成「版本是新版、hash 是舊版」的必死組合。此時保留 PKG_HASH:=skip，
+            #    讓 build 階段重新下載不驗證。
             if [ -z "$FILE" ] || [ ! -f "$FILE" ]; then
-              FILE="$(
-                find dl -maxdepth 1 -type f \
-                  \( -name "${pattern}*.tar.gz" \
-                  -o -name "${pattern}*.tar.xz" \
-                  -o -name "${pattern}*.zip" \) \
-                  -print 2>/dev/null |
-                  sort |
-                  head -n 1
-              )"
+              if [ -n "$pkg_source" ]; then
+                echo "⚠️ $name: expected artifact dl/$pkg_source missing after download; keeping 'skip' (拒絕用舊版 tarball 冒充)"
+              else
+                FILE="$(
+                  find dl -maxdepth 1 -type f \
+                    \( -name "${pattern}*.tar.gz" \
+                    -o -name "${pattern}*.tar.xz" \
+                    -o -name "${pattern}*.zip" \) \
+                    -print 2>/dev/null |
+                    sort |
+                    head -n 1
+                )"
+              fi
             fi
             
             # 6. SHA256 Self-Healing
@@ -1835,6 +1843,14 @@ jobs:
           FAST_BUILD_STATUS="SUCCESS"
           echo "▶️ [Step] Starting main compilation..."
           if ! make -j$(nproc) 2>&1 | tee >(gzip -1 -c > ../logs_build.log.gz); then
+            # 2026-10-09: 下載類失敗（hash 不符 / 鏡像 404）重跑 make -j1 V=s 全量 verbose
+            # 只是刷屏（數萬行）且必定在同一個下載點再死一次，直接報錯不 fallback
+            if gzip -dc ../logs_build.log.gz 2>/dev/null | grep -qE "No more mirrors to try|Hash of the downloaded file does not match|Download failed"; then
+              echo "❌ 下載階段失敗（非編譯錯誤），跳過 verbose fallback，直接結束"
+              echo "FAST_BUILD_FAILED=true" > ../build-status.txt
+              echo "FAST_BUILD_STATUS=FAILED (Download)" >> ../build-status.txt
+              exit 1
+            fi
             FAST_BUILD_STATUS="FAILED (Fallback to Debug)"
             echo "FAST_BUILD_FAILED=true" > ../build-status.txt
             rm -rf tmp build_dir/hostpkg staging_dir/hostpkg
