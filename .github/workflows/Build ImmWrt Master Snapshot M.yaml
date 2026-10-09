@@ -1654,6 +1654,7 @@ jobs:
             echo "CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y"
             echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y"
             echo "CONFIG_PACKAGE_qemu-ga=y"
+            echo "CONFIG_PACKAGE_input-support=y"
             echo "CONFIG_PACKAGE_irqbalance=y"
               echo "CONFIG_PACKAGE_kmod-wireguard=y"
             echo "CONFIG_PACKAGE_wireguard-tools=y"
@@ -1728,7 +1729,27 @@ jobs:
           
           echo "=== 🔬 WireGuard Package Selection Audit ==="
           grep -iE "CONFIG_PACKAGE_(kmod-wireguard|wireguard-tools|luci-proto-wireguard|qrencode)" .config || true
+          echo "=== \U0001f50e QEMU-GA Source/Kconfig Audit (Pre-Defconfig) ==="
+          find package/feeds/packages package/feeds -path '*/qemu/Makefile' -print 2>/dev/null || true
+          grep -R -n -A14 -B4 'define Package/qemu-ga' package/feeds/packages package/feeds 2>/dev/null | head -80 || true
+          echo "--- generated PACKAGE_qemu-ga symbol ---"
+          grep -n -A14 -B5 'PACKAGE_qemu-ga' tmp/.config-package.in 2>/dev/null || true
+          echo "--- qemu-ga dependency symbols ---"
+          for p in glib2 virtio-console-helper libstdcpp libudev; do
+            echo "===== $p ====="
+            grep -n -A8 -B3 "PACKAGE_${p}" tmp/.config-package.in 2>/dev/null | head -30 || true
+          done
+          echo "--- pre-defconfig qemu-ga ---"
+          grep -E '^(CONFIG_PACKAGE_qemu-ga|# CONFIG_PACKAGE_qemu-ga)' .config || true
           make defconfig
+          echo "=== \U0001f50e QEMU-GA Post-Defconfig Diagnostic ==="
+          grep -E '^(CONFIG_PACKAGE_qemu-ga|# CONFIG_PACKAGE_qemu-ga)' .config || true
+          echo "--- PACKAGE_input-support symbol ---"
+          grep -n -A10 -B4 "PACKAGE_input-support" tmp/.config-package.in 2>/dev/null || true
+          echo "--- qemu-ga/input-support post-defconfig config ---"
+          grep -E "^(CONFIG_PACKAGE_(qemu-ga|input-support)|# CONFIG_PACKAGE_(qemu-ga|input-support))" .config || true
+          echo "--- generated PACKAGE_qemu-ga symbol after defconfig ---"
+          grep -n -A14 -B5 'PACKAGE_qemu-ga' tmp/.config-package.in 2>/dev/null || true
 
           echo "=== 🔒 Post-Defconfig Forbidden Package Audit ==="
           FORBIDDEN_PKGS="block-mount automount luci-app-fstab luci-app-plugins"
