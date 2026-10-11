@@ -406,6 +406,7 @@ jobs:
           /etc/passwall/rules/direct_ip
           /etc/passwall/rules/proxy_host
           /etc/passwall/rules/proxy_ip
+          /etc/smartdns/address.conf
           "
           readonly OPTIONAL_FILES
 
@@ -465,7 +466,8 @@ jobs:
                   /etc/passwall/rules/direct_host|\
                   /etc/passwall/rules/direct_ip|\
                   /etc/passwall/rules/proxy_host|\
-                  /etc/passwall/rules/proxy_ip)
+                  /etc/passwall/rules/proxy_ip|\
+                  /etc/smartdns/address.conf)
                       return 0
                       ;;
                   *)
