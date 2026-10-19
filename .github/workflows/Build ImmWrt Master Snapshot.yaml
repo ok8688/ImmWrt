@@ -395,7 +395,6 @@ jobs:
           /etc/config/passwall_server
           /etc/config/smartdns
           /etc/config/system
-          /etc/config/upnpd
           /etc/crontabs/root
           "
           readonly REQUIRED_FILES
@@ -459,7 +458,6 @@ jobs:
                   /etc/config/passwall_server|\
                   /etc/config/smartdns|\
                   /etc/config/system|\
-                  /etc/config/upnpd|\
                   /etc/crontabs/root|\
                   /etc/config/argon|\
                   /etc/passwall/rules/direct_host|\
@@ -1647,8 +1645,6 @@ jobs:
             echo "CONFIG_PACKAGE_luci-app-ddns=y"
             echo "CONFIG_PACKAGE_luci-i18n-ddns-zh-cn=y"
             echo "CONFIG_PACKAGE_ddns-scripts-cloudflare=y"
-            echo "CONFIG_PACKAGE_luci-app-upnp=y"
-            echo "CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=y"
             echo "CONFIG_PACKAGE_luci-theme-argon=y"
             echo "CONFIG_PACKAGE_luci-app-argon-config=y"
             echo "CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y"
