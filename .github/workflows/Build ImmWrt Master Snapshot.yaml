@@ -120,13 +120,16 @@ jobs:
           retry timeout 35m ./scripts/feeds update -a
           
           # ✅ 終極物理防護 - 徹底切斷舊版供應鏈，並嚴格拔除不要的插件
-          ./scripts/feeds uninstall luci-app-passwall xray-core sing-box smartdns luci-app-fstab luci-app-plugins || true
-          rm -rf feeds/luci/applications/luci-app-passwall feeds/packages/net/xray-core feeds/packages/net/sing-box feeds/packages/net/smartdns feeds/luci/applications/luci-app-fstab feeds/luci/applications/luci-app-plugins
-          rm -rf package/feeds/luci/luci-app-passwall package/feeds/packages/xray-core package/feeds/packages/sing-box package/feeds/packages/smartdns package/feeds/luci/luci-app-fstab package/feeds/luci/luci-app-plugins
+          ./scripts/feeds uninstall luci-app-passwall xray-core sing-box smartdns luci-app-smartdns luci-app-fstab luci-app-plugins || true
+          rm -rf feeds/luci/applications/luci-app-passwall feeds/packages/net/xray-core feeds/packages/net/sing-box feeds/packages/net/smartdns feeds/luci/applications/luci-app-smartdns feeds/luci/applications/luci-app-fstab feeds/luci/applications/luci-app-plugins
+          rm -rf package/feeds/luci/luci-app-passwall package/feeds/packages/xray-core package/feeds/packages/sing-box package/feeds/packages/smartdns package/feeds/luci/luci-app-smartdns package/feeds/luci/luci-app-fstab package/feeds/luci/luci-app-plugins
           
           echo "▶️ [Step] Cloning Passwall ecosystem (Latest Upstream)..."
           retry bash -c 'timeout 20m git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/openwrt-passwall-packages'
           retry bash -c 'timeout 20m git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/openwrt-passwall'
+
+          echo "▶️ [Step] Cloning luci-app-smartdns from pymumu upstream (replaces feeds copy)..."
+          retry bash -c 'timeout 20m git clone --depth=1 https://github.com/pymumu/luci-app-smartdns.git package/luci-app-smartdns'
             
           # =====================================================
           # 🦀 Master Rust Transplant：Ubuntu 24.04 / LTS Toolchain Compatibility
