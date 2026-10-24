@@ -120,9 +120,9 @@ jobs:
           retry timeout 35m ./scripts/feeds update -a
           
           # ✅ 終極物理防護 - 徹底切斷舊版供應鏈，並嚴格拔除不要的插件
-          ./scripts/feeds uninstall luci-app-passwall xray-core sing-box smartdns luci-app-smartdns luci-app-fstab luci-app-plugins || true
-          rm -rf feeds/luci/applications/luci-app-passwall feeds/packages/net/xray-core feeds/packages/net/sing-box feeds/packages/net/smartdns feeds/luci/applications/luci-app-smartdns feeds/luci/applications/luci-app-fstab feeds/luci/applications/luci-app-plugins
-          rm -rf package/feeds/luci/luci-app-passwall package/feeds/packages/xray-core package/feeds/packages/sing-box package/feeds/packages/smartdns package/feeds/luci/luci-app-smartdns package/feeds/luci/luci-app-fstab package/feeds/luci/luci-app-plugins
+          ./scripts/feeds uninstall luci-app-passwall xray-core sing-box smartdns luci-app-smartdns luci-app-fstab luci-app-plugins luci-theme-argon || true
+          rm -rf feeds/luci/applications/luci-app-passwall feeds/packages/net/xray-core feeds/packages/net/sing-box feeds/packages/net/smartdns feeds/luci/applications/luci-app-smartdns feeds/luci/applications/luci-app-fstab feeds/luci/applications/luci-app-plugins feeds/luci/themes/luci-theme-argon
+          rm -rf package/feeds/luci/luci-app-passwall package/feeds/packages/xray-core package/feeds/packages/sing-box package/feeds/packages/smartdns package/feeds/luci/luci-app-smartdns package/feeds/luci/luci-app-fstab package/feeds/luci/luci-app-plugins package/feeds/luci/luci-theme-argon
           
           echo "▶️ [Step] Cloning Passwall ecosystem (Latest Upstream)..."
           retry bash -c 'timeout 20m git clone --depth=1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/openwrt-passwall-packages'
@@ -130,6 +130,9 @@ jobs:
 
           echo "▶️ [Step] Cloning luci-app-smartdns from pymumu upstream (replaces feeds copy)..."
           retry bash -c 'timeout 20m git clone --depth=1 https://github.com/pymumu/luci-app-smartdns.git package/luci-app-smartdns'
+
+          echo "▶️ [Step] Cloning luci-theme-argon from jerrykuku upstream (replaces feeds copy)..."
+          retry bash -c 'timeout 20m git clone --depth=1 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon'
             
           # =====================================================
           # 🦀 Master Rust Transplant：Ubuntu 24.04 / LTS Toolchain Compatibility
@@ -1568,6 +1571,20 @@ jobs:
           esac
           IB_SCRIPT
           chmod 755 openwrt/package/base-files/files/usr/bin/ib
+
+      - name: Set Argon as Default Theme
+        run: |
+          set -euo pipefail
+          echo "▶️ [Step] Setting Argon as the default LuCI theme on first boot..."
+          mkdir -p openwrt/package/base-files/files/etc/uci-defaults
+          cat > openwrt/package/base-files/files/etc/uci-defaults/99-argon-default-theme <<'EOF'
+          #!/bin/sh
+          # Template-injected: boot into Argon by default.
+          uci set luci.main.mediaurlbase='/luci-static/argon'
+          uci commit luci
+          exit 0
+          EOF
+          chmod 755 openwrt/package/base-files/files/etc/uci-defaults/99-argon-default-theme
           
       - name: Generate Cache Variables
         id: var
