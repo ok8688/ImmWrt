@@ -22,6 +22,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: write # upload-artifact（失敗時上傳 pkg debug log）所需
 
 jobs:
   build:
@@ -212,6 +213,41 @@ jobs:
           echo "=== 🔍 DEFAULT_PACKAGES.tweak ==="
           sed -n '/^DEFAULT_PACKAGES.tweak:=/,/^$/p' include/target.mk
           echo "✅ Direct block-mount default injection removed; remaining tweak entries preserved."
+          # =====================================================
+
+          # =====================================================
+          # 🔒 firewall4 fullcone patch 刷新（2026-10-27）
+          # immortalwrt 的 001-firewall4-add-support-for-fullcone-nat.patch
+          # 第 8 個 hunk 的 context 是舊版 fw4.uc（zone.dflags.helper = true），
+          # 上游 2026-10-26 HEAD（bac1d65）改了 helper 邏輯（預設 false、
+          # 搵到可用 helper 先設 true），舊 patch 打不上 → Prepare 失敗、
+          # firewall4 compile 即死（0.08 秒、無 error: 字串，診斷睇唔到）。
+          # 修法：只翻該行 context（true→false），其餘 hunk 不動。
+          # 按 fw4 來源日期設閘：25.12 線 fw4 仍是 2025-03-17 舊版，
+          # 原 patch 正確，必須跳過；master HEAD（含 helper 改動）先刷新。
+          # 若上游日後自己刷新 patch，此步驟應撤走。
+          # =====================================================
+          FW4_MK="package/network/config/firewall4/Makefile"
+          FW4_PATCH="package/network/config/firewall4/patches/001-firewall4-add-support-for-fullcone-nat.patch"
+          FW4_DATE="$(grep -E '^PKG_SOURCE_DATE:=' "$FW4_MK" 2>/dev/null | sed -E 's/^PKG_SOURCE_DATE:=//' || true)"
+          if [ -z "$FW4_DATE" ]; then
+            echo "❌ cannot parse firewall4 PKG_SOURCE_DATE from $FW4_MK"
+            exit 1
+          fi
+          if [[ "$FW4_DATE" < "2026-10-26" ]]; then
+            echo "✅ firewall4 source $FW4_DATE predates helper rework; original fullcone patch kept as-is."
+          else
+            if [ ! -f "$FW4_PATCH" ]; then
+              echo "❌ firewall4 fullcone patch missing but source $FW4_DATE needs refresh; override outdated"
+              exit 1
+            fi
+            sed -i 's/zone\.dflags\.helper = true;/zone.dflags.helper = false;/' "$FW4_PATCH"
+            if ! grep -q 'zone\.dflags\.helper = false;' "$FW4_PATCH"; then
+              echo "❌ fullcone patch refresh failed: expected line not found"
+              exit 1
+            fi
+            echo "✅ firewall4 fullcone patch helper context aligned for source $FW4_DATE (true→false applied or already fresh)."
+          fi
           # =====================================================
 
           echo "▶️ [Step] Installing feeds..."
@@ -1888,7 +1924,9 @@ jobs:
               else
                 echo "❌ $FAILED_PKG 單編仍失敗，關鍵錯誤："
                 echo "===================="
-                grep -a -B2 -A10 -iE "error:" ../logs_pkg_debug.log | tail -n 60 || tail -n 60 ../logs_pkg_debug.log
+                grep -a -B2 -A10 -iE "error:" ../logs_pkg_debug.log | tail -n 60 || true
+                echo "---- 原始 verbose 尾段（最後 80 行；grep 濾不到的錯誤在此，如 patch Hunk FAILED） ----"
+                tail -n 80 ../logs_pkg_debug.log
                 echo "===================="
                 gzip -1 -c ../logs_build.log > ../logs_build.log.gz; rm -f ../logs_build.log
                 gzip -1 -c ../logs_pkg_debug.log > ../logs_pkg_debug.log.gz; rm -f ../logs_pkg_debug.log
@@ -1913,6 +1951,15 @@ jobs:
             df -h "$CCACHE_DIR"
           } > ../logs_ccache.info 2>&1 || echo "ccache unavailable" > ../logs_ccache.info
           
+      - name: Upload Per-Package Debug Log (on failure)
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pkg-debug-log
+          path: logs_pkg_debug.log.gz
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Save Cache (dl)
         uses: actions/cache/save@v6
         if: success() && !cancelled()
