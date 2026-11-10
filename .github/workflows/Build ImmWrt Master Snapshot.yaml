@@ -398,14 +398,14 @@ jobs:
             done | sort
           } > ../feeds.snapshot.txt
 
-      - name: Inject ImmWrt Backup Tool (ib v1.8)
+      - name: Inject ImmWrt Backup Tool (ib v1.9)
         run: |
           set -e
           mkdir -p openwrt/package/base-files/files/usr/bin
           cat << 'IB_SCRIPT' > openwrt/package/base-files/files/usr/bin/ib
           #!/bin/sh
 
-          VERSION="1.8"
+          VERSION="1.9"
           readonly VERSION
 
           BACKUP_DIR="${IBB_BACKUP_DIR:-/root}"
@@ -444,6 +444,7 @@ jobs:
 
           OPTIONAL_FILES="
           /etc/config/argon
+          /etc/smartdns/custom.conf
           /etc/passwall/rules/direct_host
           /etc/passwall/rules/direct_ip
           /etc/passwall/rules/proxy_host
@@ -503,6 +504,7 @@ jobs:
                   /etc/config/system|\
                   /etc/crontabs/root|\
                   /etc/config/argon|\
+                  /etc/smartdns/custom.conf|\
                   /etc/passwall/rules/direct_host|\
                   /etc/passwall/rules/direct_ip|\
                   /etc/passwall/rules/proxy_host|\
@@ -2119,7 +2121,7 @@ jobs:
             - **顯式宣告 APK**：在設定檔中明確宣告 `CONFIG_USE_APK=y`，鎖定底層套件管理架構。
             - **三重防線審計**：Defconfig、Post-Defconfig、最終 Manifest 階段強制檢查，杜絕 `block-mount`、`automount`、`luci-app-fstab`、`luci-app-plugins`${{ env.INCLUDE_XRAY != 'true' && '、`xray-core`' || '' }} 任何形式的依賴回歸。
             - **PassWall 最新主幹同步**：即時拉取最新 `openwrt-passwall` 與 `openwrt-passwall-packages`。
-            - **備份引擎**：內建 `ib v1.8`，解耦套件強依賴，跨版本配置恢復安全。
+            - **備份引擎**：內建 `ib v1.9`，解耦套件強依賴，跨版本配置恢復安全。
             - **網路核心擴展**：完整嵌入 `WireGuard` 核心套件、官方 `wireguard-tools`、`luci-proto-wireguard` 及 `qrencode` (QR Code 支援)。
             - **自癒架構 (SDC v1.4)**：OpenWrt Native `dumpinfo` 解析；強制清除同名舊 dl 壓縮包消滅 Stale Cache；精準相容 ERE 賦值；SDC 可觀測性日誌。
             - **極致溯源與環境決定性**：`openwrt_release` 提取範圍限縮至 `target-x86_64_musl`；4G Swap 建立流程免疫 Runner Drift。
