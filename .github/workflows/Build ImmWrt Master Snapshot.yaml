@@ -216,13 +216,18 @@ jobs:
           # =====================================================
 
           # =====================================================
-          # 🔒 firewall4 fullcone patch 刷新（2026-10-27）
+          # 🔒 firewall4 fullcone patch 刷新（2026-10-27 hunk #8；2026-11-15 hunk #1）
           # immortalwrt 的 001-firewall4-add-support-for-fullcone-nat.patch
           # 第 8 個 hunk 的 context 是舊版 fw4.uc（zone.dflags.helper = true），
           # 上游 2026-10-26 HEAD（bac1d65）改了 helper 邏輯（預設 false、
           # 搵到可用 helper 先設 true），舊 patch 打不上 → Prepare 失敗、
           # firewall4 compile 即死（0.08 秒、無 error: 字串，診斷睇唔到）。
           # 修法：只翻該行 context（true→false），其餘 hunk 不動。
+          # 2026-11-15 追加：第 1 個 hunk 的 context 是舊版
+          # root/etc/config/firewall 兩行註釋（disable_ipv6），
+          # 上游 2026-11-03（358d421）刪咗呢兩行，舊 patch 打唔上。
+          # 修法：刪走呢兩行 context，並將 hunk header 由 -5,6 +5,10
+          # 改為 -5,4 +5,8；第二閘：fw4 來源日期 ≥ 2026-11-03 先刷新。
           # 按 fw4 來源日期設閘：25.12 線 fw4 仍是 2025-03-17 舊版，
           # 原 patch 正確，必須跳過；master HEAD（含 helper 改動）先刷新。
           # 若上游日後自己刷新 patch，此步驟應撤走。
@@ -247,6 +252,24 @@ jobs:
               exit 1
             fi
             echo "✅ firewall4 fullcone patch helper context aligned for source $FW4_DATE (true→false applied or already fresh)."
+          fi
+          if [[ "$FW4_DATE" < "2026-11-03" ]]; then
+            echo "✅ firewall4 source $FW4_DATE predates disable_ipv6 removal; hunk #1 context kept as-is."
+          else
+            if [ ! -f "$FW4_PATCH" ]; then
+              echo "❌ firewall4 fullcone patch missing but source $FW4_DATE needs hunk #1 refresh; override outdated"
+              exit 1
+            fi
+            sed -i -E '/^ # Uncomment this line to disable ipv6 rules$/d; /^ #\toption disable_ipv6\t1$/d; s/^\@\@ -5,6 \+5,10 \@\@ config defaults$/@@ -5,4 +5,8 @@ config defaults/' "$FW4_PATCH"
+            if grep -q 'disable_ipv6' "$FW4_PATCH"; then
+              echo "❌ fullcone patch hunk #1 refresh failed: disable_ipv6 context lines still present"
+              exit 1
+            fi
+            if ! grep -q '^@@ -5,4 +5,8 @@ config defaults$' "$FW4_PATCH"; then
+              echo "❌ fullcone patch hunk #1 refresh failed: header not updated"
+              exit 1
+            fi
+            echo "✅ firewall4 fullcone patch hunk #1 context aligned for source $FW4_DATE (disable_ipv6 lines removed)."
           fi
           # =====================================================
 
